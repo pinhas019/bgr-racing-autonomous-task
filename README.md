@@ -249,7 +249,7 @@ into a 160 × 1200 panorama in the sensor's own pixel layout. The horizon runs c
 ![profiles](output/track_profiles.png)
 
 - **Speed map** (top of this page): on the raceline every corner is taken faster, and the slowest corner, the hairpin, rises from
-  65 to 80 km/h. The centerline shows 19 corner dips against 10 on the raceline. Most of the extra dips come from the kinks in the boundary data (see below).
+  65 to 80 km/h. The centerline shows 20 corner dips against 9 on the raceline. Most of the extra dips come from the kinks in the boundary data (see below).
 - The raceline uses the full track width (offsets up to 15.6 m) in the classic **outside → apex → outside** pattern.
   Peak curvature drops from 0.047 to 0.030 1/m, so the slowest corner (the hairpin at ≈ 600 m) is taken at 80 km/h instead of 65 km/h.
 - The raceline is also 74 m shorter than the centerline.
