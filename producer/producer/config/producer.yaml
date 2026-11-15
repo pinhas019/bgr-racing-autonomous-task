@@ -1,0 +1,3 @@
+producer:
+  ros__parameters:
+    csv_path: "/data/BrandsHatchLayout.csv"   # columns: x, y, side (left/right)

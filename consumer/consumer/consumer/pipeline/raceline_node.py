@@ -13,7 +13,7 @@ from scipy.sparse import diags
 from std_msgs.msg import Float64MultiArray
 
 from consumer.pipeline.centerline_node import left_normals
-from consumer.pipeline.msg_utils import LATCHED, Stage, msg_to_array, path_to_xy, run, xy_to_path
+from consumer.pipeline.msg_utils import Stage, msg_to_array, path_to_xy, require_params, run, xy_to_path
 
 
 def curvature(xy):
@@ -33,7 +33,7 @@ def curvature_energy(xy):
     return np.sum(curvature(xy) ** 2 * segment_lengths(xy))
 
 
-def min_curvature_raceline(center, widths, margin=1.0):
+def min_curvature_raceline(center, widths, margin):
     """Return (raceline xy, lateral offsets). widths[:, 0/1] = distance to left/right boundary."""
     n = len(center)
     normals = left_normals(center)
@@ -55,8 +55,8 @@ class RacelineNode(Stage):
     def __init__(self):
         super().__init__("raceline_node", {"center": (Path, "/track/centerline"),
                                            "width": (Float64MultiArray, "/track/width")})
-        self.margin = self.declare_parameter("margin", 1.0).value
-        self.pub = self.create_publisher(Path, "/track/raceline", LATCHED)
+        self.margin = require_params(self, "margin")["margin"]
+        self.pub = self.output(Path, "/track/raceline")
 
     def process(self, center, width):
         c = path_to_xy(center)

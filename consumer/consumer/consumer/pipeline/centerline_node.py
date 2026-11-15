@@ -5,28 +5,23 @@ left, i.e. along the normal obtained by rotating the tangent +90 deg. Widths are
 """
 import numpy as np
 from nav_msgs.msg import Path
-from scipy.interpolate import splev, splprep
+from scipy.interpolate import CubicSpline
 from scipy.spatial import cKDTree
 from std_msgs.msg import Float64MultiArray
 
-from consumer.pipeline.msg_utils import LATCHED, Stage, array_to_msg, path_to_xy, run, xy_to_path
-
-
-def open_loop(xy):
-    """Drop a duplicated closing point, if present."""
-    return xy[:-1] if np.allclose(xy[0], xy[-1]) else xy
+from consumer.pipeline.msg_utils import Stage, array_to_msg, path_to_xy, require_params, run, xy_to_path
 
 
 def resample_closed(xy, n):
-    """Fit a periodic spline through a closed polyline and return n points equally spaced by arc length."""
-    xy = open_loop(np.asarray(xy, float))
-    loop = np.vstack([xy, xy[:1]])  # splprep(per=1) wants the first point repeated at the end
-    tck, _ = splprep(loop.T, s=0, per=1)  # exact interpolation; smoothing only cost accuracy
-    u = np.linspace(0, 1, 20 * n, endpoint=False)
-    dense = np.column_stack(splev(u, tck))
-    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(dense, axis=0, append=dense[:1]), axis=1))])
-    u_even = np.interp(np.linspace(0, s[-1], n, endpoint=False), s, np.append(u, 1.0))
-    return np.column_stack(splev(u_even, tck))
+    """Periodic cubic spline through a closed polyline (chord-length parameter ~ arc length),
+    sampled at n evenly spaced points."""
+    xy = np.asarray(xy, float)
+    if np.allclose(xy[0], xy[-1]):
+        xy = xy[:-1]
+    loop = np.vstack([xy, xy[:1]])
+    u = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(loop, axis=0), axis=1))])
+    spline = CubicSpline(u, loop, bc_type="periodic", axis=0)
+    return spline(np.linspace(0, u[-1], n, endpoint=False))
 
 
 def left_normals(xy):
@@ -40,7 +35,7 @@ def signed_area(xy):
     return 0.5 * np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)
 
 
-def compute_centerline(left, right, n=500, n_dense=5000):
+def compute_centerline(left, right, n, n_dense):
     """Midpoints between each left point and its nearest right point, re-splined and evenly resampled."""
     L, R = resample_closed(left, n_dense), resample_closed(right, n_dense)
     if np.sign(signed_area(L)) != np.sign(signed_area(R)):
@@ -59,12 +54,13 @@ class CenterlineNode(Stage):
     def __init__(self):
         super().__init__("centerline_node", {"left": (Path, "/track/left_boundary"),
                                              "right": (Path, "/track/right_boundary")})
-        self.n = self.declare_parameter("n_samples", 500).value
-        self.pub_center = self.create_publisher(Path, "/track/centerline", LATCHED)
-        self.pub_width = self.create_publisher(Float64MultiArray, "/track/width", LATCHED)
+        self.cfg = require_params(self, "n_samples", "n_dense")
+        self.pub_center = self.output(Path, "/track/centerline")
+        self.pub_width = self.output(Float64MultiArray, "/track/width")
 
     def process(self, left, right):
-        center, widths = compute_centerline(path_to_xy(left), path_to_xy(right), self.n)
+        center, widths = compute_centerline(path_to_xy(left), path_to_xy(right),
+                                            self.cfg["n_samples"], self.cfg["n_dense"])
         total = widths.sum(axis=1)
         self.get_logger().info(f"centerline: {len(center)} pts, width min/mean/max "
                                f"{total.min():.1f}/{total.mean():.1f}/{total.max():.1f} m")

@@ -11,4 +11,5 @@ RUN . /opt/ros/jazzy/setup.sh && colcon build && rm -rf build log
 COPY tests tests
 
 ENV MPLBACKEND=Agg
-CMD ["bash", "-c", ". /ws/install/setup.bash && ros2 launch consumer pipeline.launch.py"]
+# ros2 launch exits 0 even if a node failed, so success = a fresh results.json (the report deletes stale ones).
+CMD ["bash", "-c", ". /ws/install/setup.bash && ros2 launch consumer pipeline.launch.py && test -f /output/results.json"]

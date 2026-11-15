@@ -1,0 +1,33 @@
+{
+  "boundary_points": {
+    "left": 156,
+    "right": 156
+  },
+  "centerline_length_m": 3919.8,
+  "raceline_length_m": 3845.5,
+  "track_width_m": {
+    "min": 22.59,
+    "mean": 27.54,
+    "max": 35.42
+  },
+  "max_curvature_1_per_m": {
+    "centerline": 0.0466,
+    "raceline": 0.03
+  },
+  "lap_time_s": {
+    "centerline": 95.47,
+    "raceline": 74.36,
+    "gain": 21.11
+  },
+  "speed_kmh": {
+    "centerline": {
+      "min": 64.6,
+      "max": 252.0
+    },
+    "raceline": {
+      "min": 80.5,
+      "max": 252.0
+    }
+  },
+  "raceline_min_clearance_to_boundary_m": 1.0
+}

@@ -9,6 +9,7 @@ from consumer.pipeline.raceline_node import curvature, min_curvature_raceline, s
 from consumer.pipeline.speed_profile_node import lap_time, speed_profile
 
 R, HALF_W = 100.0, 5.0
+N_DENSE = 5000
 
 
 def circle(r, n, ccw=True):
@@ -23,7 +24,7 @@ def circle_track():
 
 
 def test_centerline_on_circle():
-    center, widths = compute_centerline(*circle_track(), n=400)
+    center, widths = compute_centerline(*circle_track(), n=400, n_dense=N_DENSE)
     assert center.shape == (400, 2) and widths.shape == (400, 2)
     assert np.allclose(np.linalg.norm(center, axis=1), R, atol=0.05)
     assert np.allclose(widths, HALF_W, atol=0.05)
@@ -38,7 +39,7 @@ CAR = {"a_lat": 15.0, "a_acc": 8.0, "a_brk": 12.0, "v_top": 30.0}
 
 def test_raceline_on_circle_hugs_outside():
     # Min curvature on a constant-radius corner = largest radius = outer edge (right side when driving CCW).
-    center, widths = compute_centerline(*circle_track(), n=200)
+    center, widths = compute_centerline(*circle_track(), n=200, n_dense=N_DENSE)
     race, alpha = min_curvature_raceline(center, widths, MARGIN)
     assert np.allclose(np.linalg.norm(race, axis=1), R + HALF_W - MARGIN, atol=0.05)
     assert np.all(alpha >= -(widths[:, 1] - MARGIN) - 1e-9) and np.all(alpha <= widths[:, 0] - MARGIN + 1e-9)
@@ -61,6 +62,6 @@ def test_raceline_is_faster_than_centerline():
     # Ellipse-shaped track: the raceline should cut the corners and be quicker.
     t = np.linspace(0, 2 * np.pi, 120, endpoint=False)
     ell = lambda a, b: np.column_stack([a * np.cos(t), b * np.sin(t)])  # noqa: E731
-    center, widths = compute_centerline(ell(200 - HALF_W, 60 - HALF_W), ell(200 + HALF_W, 60 + HALF_W), n=120)
+    center, widths = compute_centerline(ell(200 - HALF_W, 60 - HALF_W), ell(200 + HALF_W, 60 + HALF_W), n=120, n_dense=N_DENSE)
     race, _ = min_curvature_raceline(center, widths, MARGIN)
     assert lap_time(race, speed_profile(race, **CAR)) < lap_time(center, speed_profile(center, **CAR))

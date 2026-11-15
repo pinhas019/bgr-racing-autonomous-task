@@ -1,0 +1,22 @@
+# All consumer pipeline settings. Nodes have no defaults in code: a missing key is a startup error.
+centerline_node:
+  ros__parameters:
+    n_samples: 500        # centerline points handed to the rest of the pipeline (~7.8 m spacing)
+    n_dense: 5000         # boundary resampling density used for nearest-point matching
+
+raceline_node:
+  ros__parameters:
+    margin: 1.0           # [m] minimum distance kept from each boundary
+
+speed_profile_node:
+  ros__parameters:        # point-mass vehicle, roughly a GT car
+    a_lat: 15.0           # [m/s^2] max lateral acceleration
+    a_acc: 8.0            # [m/s^2] max longitudinal acceleration
+    a_brk: 12.0           # [m/s^2] max braking deceleration
+    v_top: 70.0           # [m/s]   top speed
+
+report_node:
+  ros__parameters:
+    track_name: "Brands Hatch"
+    output_dir: "/output"
+    timeout_s: 180.0      # give up if the pipeline inputs never arrive
