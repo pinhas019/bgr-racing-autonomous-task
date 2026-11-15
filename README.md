@@ -1,18 +1,32 @@
-# BGR-race: minimum-curvature raceline pipeline (ROS 2 + Docker)
+# BGR-race: raceline planning and LiDAR perception pipeline (ROS 2 + Docker)
 
-Two Docker containers, a **producer** and a **consumer**, talk over ROS 2 Jazzy. The producer publishes the
-Brands Hatch track boundaries. The consumer runs a four-node pipeline that builds a centerline, optimizes a
-**minimum-curvature raceline** and computes a **speed profile and lap time** for both lines. It then writes
-the plots and data files.
+Two Docker containers, a **producer** and a **consumer**, talk over ROS 2 Jazzy. The producer publishes two
+datasets, and the consumer processes each one in its own branch of pipeline nodes:
+
+- **Track (planning):** the Brands Hatch boundaries become a centerline, then a **minimum-curvature raceline**,
+  then a **speed profile and lap time** for both lines.
+- **LiDAR (perception):** one LiDAR frame is split into ground and obstacles with a robust **ground-plane fit**.
+  The obstacles are clustered into objects, and **cone-sized objects** are flagged.
+
+A final report node writes plots, tables and a summary for both branches.
 
 ![track](output/track.png)
 
-| | Centerline | Raceline |
+| Track | Centerline | Raceline |
 |---|---|---|
 | Length | 3919.8 m | 3845.5 m |
 | Max curvature | 0.0466 1/m (R ≈ 21 m) | 0.0300 1/m (R ≈ 33 m) |
 | Min speed | 64.6 km/h | 80.5 km/h |
 | **Lap time** | **95.47 s** | **74.36 s** (−21.1 s) |
+
+![lidar](output/lidar_bev.png)
+
+| LiDAR frame 702 | |
+|---|---|
+| Pixels / returns | 192,000 / 119,781 |
+| Ground plane | z = 0.0141·x + 0.0179·y − 1.081 m (tilt 1.31°, sensor 1.08 m above ground) |
+| Points (ground / obstacle / overhead / false alarm) | 89,309 / 16,885 / 2,183 / 11,404 |
+| Objects / cone candidates | 50 / 23 |
 
 ---
 
@@ -25,19 +39,24 @@ git clone git@github.com:pinhas019/bgr-racing-autonomous-task.git && cd bgr-raci
 docker compose up --build
 ```
 
-Both containers exit on their own when the pipeline is done, which takes about 10 s after the build. Results are written to `output/`:
+Both containers exit on their own when the pipeline is done, which takes about 12 s after the build. Results are written to `output/`:
 
 | File | Content |
 |---|---|
 | `track.png` | Boundaries, centerline and raceline, colored by speed |
-| `profiles.png` | Lateral offset, curvature and speed along the lap, for centerline and raceline |
-| `pipeline_data.csv` | Every per-point value the pipeline computed (500 rows, see [Outputs](#outputs)) |
-| `results.json` | Summary statistics. It is written last, so if it exists the run succeeded |
+| `track_profiles.png` | Lateral offset, curvature and speed along the lap, for centerline and raceline |
+| `track_data.csv` | Every per-point value of the track branch (500 rows) |
+| `lidar_bev.png` | Bird's-eye view: ground, objects (one colour each) and cone candidates |
+| `lidar_scan.png` | Range image and per-pixel labels in the sensor's own pixel layout |
+| `lidar_points.csv` | Every pixel with every field, plus its label, height above ground and object id (192,000 rows, 14 MB; generated, not committed) |
+| `lidar_objects.csv` | One row per object: size, position, top height, range, reflectivity, cone flag |
+| `results.json` | Summary statistics for both branches. It is written last, so if it exists the run succeeded |
 
-The consumer container exits with code `0` on success and `1` if the pipeline failed. The files in `output/` are
-created by the container as root. You can still delete them, because `output/` itself belongs to you.
+The column meanings are listed under [Outputs](#outputs). The consumer container exits with code `0` on success
+and `1` if the pipeline failed. The files in `output/` are created by the container as root. You can still delete
+them, because `output/` itself belongs to you.
 
-Unit tests (pure functions on synthetic tracks; no ROS graph is started):
+Unit tests (pure functions on synthetic tracks and synthetic LiDAR scenes; no ROS graph is started):
 
 ```bash
 docker compose run --rm --no-deps consumer bash -c '. /ws/install/setup.bash && python3 -m pytest -q /ws/tests'
@@ -45,7 +64,9 @@ docker compose run --rm --no-deps consumer bash -c '. /ws/install/setup.bash && 
 
 ---
 
-## Dataset: `BrandsHatchLayout.csv`
+## Datasets
+
+### `BrandsHatchLayout.csv`: track boundaries
 
 | Property | Value |
 |---|---|
@@ -61,6 +82,21 @@ docker compose run --rm --no-deps consumer bash -c '. /ws/install/setup.bash && 
 
 The track is wider than a typical racing surface (≈ 12–15 m). The data is used as given.
 
+### `Frame_702_Refl_1.csv`: one LiDAR frame
+
+| Property | Value |
+|---|---|
+| Capture | Frame 702, 2022-11-27 12:47:56.996 (`Epoch time (usec)` 1669546076996195) |
+| Format | CSV, one row per pixel. Columns: `Frame, Timestamp, Epoch time (usec), Pixel Number, Distance, Reflectivity, Probability of False Alarm, x, y, z, theta, phi` |
+| Units | **Centimetres** for `Distance` and `x, y, z` (`Distance` = ‖xyz‖ to within 0.1%). The producer converts them to metres. Angles are in degrees |
+| Pixel layout | 192,000 pixels = **4 azimuth zones × 160 scan lines × 300 pixels**. A 300-pixel row covers ≈ 30° of azimuth, the 4 zones together cover θ ∈ [−59°, +58°], and lines span φ ∈ [−11°, +9°]. The angular step is ≈ 0.1° in both directions |
+| Returns | 119,781 pixels (62.4%) have a return. **72,219 (37.6%) have none** (`Distance = 0`, mostly sky), but they still carry projected `x, y, z`, so validity must be judged by `Distance`, not by the coordinates |
+| Range of returns | 5.07–244.25 m, median 12.9 m |
+| Reflectivity | 0–222, median 13 |
+| Probability of false alarm | 1e-4 to 1. 89% of returns sit at the minimum (1e-4). The share above 1e-3 grows with range: 1% below 20 m, 9% at 20–40 m, 36% at 40–80 m, 96% beyond 80 m |
+| Axes | x forward, y left, z up. The ground is at z ≈ −1.08 m, so the sensor is mounted about 1.1 m high |
+| Scene | Flat paved area with long barriers or walls at y ≈ +13…+16 m, and small objects arranged like a cone course |
+
 ---
 
 ## Architecture
@@ -68,16 +104,18 @@ The track is wider than a typical racing surface (≈ 12–15 m). The data is us
 ```mermaid
 flowchart LR
     subgraph PRODUCER ["Producer container"]
-        direction LR
-        CSV[("BrandsHatchLayout.csv")] --> PN["producer_node"]
+        TCSV[("BrandsHatchLayout.csv")] --> TP["track_producer"]
+        LCSV[("Frame_702_Refl_1.csv")] --> LP["lidar_producer"]
     end
     subgraph CONSUMER ["Consumer container"]
-        direction LR
         CL["centerline_node"] -->|"centerline, width"| RL["raceline_node"]
         RL -->|"raceline"| SP["speed_profile_node"]
         SP -->|"speeds"| RP["report_node"]
+        LG["lidar_ground_node"] -->|"labels, plane"| LC["lidar_cluster_node"]
+        LC -->|"objects"| RP
     end
-    PN -->|"left, right boundary"| CL
+    TP -->|"boundaries"| CL
+    LP -->|"point cloud"| LG
     RP --> OUT[("output/")]
 ```
 
@@ -91,20 +129,26 @@ The containers find each other through DDS multicast on the Compose bridge netwo
 ```
 producer/                      IMAGE 1: data acquisition
   Dockerfile
-  data/BrandsHatchLayout.csv
+  data/                        BrandsHatchLayout.csv, Frame_702_Refl_1.csv
   producer/                    ament_python package
-    config/producer.yaml
-    producer/producer_node.py
+    config/producer.yaml       dataset paths, units, deadlines
+    config/launch.yaml         restart policy
+    launch/producer.launch.py
+    producer/
+      track_producer_node.py  lidar_producer_node.py
+      common.py                QoS, config parameters, source-node lifecycle
 consumer/                      IMAGE 2: processing pipeline
   Dockerfile
   consumer/                    ament_python package
-    config/pipeline.yaml       all algorithm / vehicle / output parameters
+    config/pipeline.yaml       all algorithm / vehicle / sensor / output parameters
     config/launch.yaml         restart policy
     launch/pipeline.launch.py
     consumer/pipeline/         one node per stage
-      centerline_node.py  raceline_node.py  speed_profile_node.py  report_node.py
+      centerline_node.py  raceline_node.py  speed_profile_node.py
+      lidar_ground_node.py  lidar_cluster_node.py
+      report_node.py  lidar_report.py
       msg_utils.py             QoS, message <-> numpy conversion, Stage base class
-  tests/test_pipeline.py
+  tests/test_pipeline.py  tests/test_lidar.py
 scripts/fault_test.sh          fault injection (kill a node mid-run)
 docker-compose.yml
 ```
@@ -116,11 +160,16 @@ last message, so start order never matters.
 
 | Topic | Type | Publisher | Content |
 |---|---|---|---|
-| `/track/left_boundary`, `/track/right_boundary` | `nav_msgs/Path` | producer | Raw boundary points |
+| `/track/left_boundary`, `/track/right_boundary` | `nav_msgs/Path` | track_producer | Raw boundary points |
 | `/track/centerline` | `nav_msgs/Path` | centerline | 500 evenly spaced points (≈ 7.8 m) |
 | `/track/width` | `std_msgs/Float64MultiArray` (500×2) | centerline | Distance to the left / right boundary |
 | `/track/raceline` | `nav_msgs/Path` | raceline | 500 points |
 | `/speed/centerline`, `/speed/raceline` | `std_msgs/Float64MultiArray` | speed_profile | Speed per point [m/s] |
+| `/lidar/points` | `sensor_msgs/PointCloud2`, organized 640×300 (6.9 MB) | lidar_producer | **Every pixel** with fields `x, y, z, distance` (m), `reflectivity, pfa, theta, phi, pixel`; stamped with the capture time |
+| `/lidar/labels` | `std_msgs/Int32MultiArray` (640×300) | lidar_ground | Per-pixel label: 0 no return, 1 false alarm, 2 ground, 3 obstacle, 4 overhead |
+| `/lidar/ground_plane` | `std_msgs/Float64MultiArray` (3) | lidar_ground | Plane coefficients a, b, c |
+| `/lidar/cluster_ids` | `std_msgs/Int32MultiArray` (640×300) | lidar_cluster | Per-pixel object id (−1 = none) |
+| `/lidar/clusters` | `std_msgs/Float64MultiArray` (objects × 12, column names in the layout) | lidar_cluster | Object table |
 | `/pipeline/status` | `std_msgs/String` | report | `success` or `failed: …`. Tells every node to exit |
 
 Every stage file has a **pure numpy/scipy function** (the algorithm, unit-tested without ROS) and a thin
@@ -128,7 +177,7 @@ Every stage file has a **pure numpy/scipy function** (the algorithm, unit-tested
 
 ---
 
-## Algorithms
+## Algorithms: track branch
 
 ### 1. Centerline (`centerline_node.py`)
 1. Each boundary is interpolated with a **periodic cubic spline** (`scipy.interpolate.CubicSpline`,
@@ -167,30 +216,69 @@ Point-mass model with parameters from `config/pipeline.yaml` (roughly a GT car):
 - The lap is closed, so the profile is computed over three unrolled laps and the middle one is kept.
 - Lap time = Σ dsᵢ / mean(vᵢ, vᵢ₊₁).
 
-### 4. Report (`report_node.py`)
-Collects every topic, writes the outputs, then publishes `/pipeline/status`.
+## Algorithms: LiDAR branch
+
+### 4. Ground plane and labels (`lidar_ground_node.py`)
+1. **Untrusted pixels are set aside:** pixels without a return (`distance = 0`) and returns whose probability of false alarm is above `max_pfa`
+   (1e-3). The false alarms are mostly isolated points in the sky and at long range. They show as red speckle in `lidar_scan.png`.
+2. **Robust plane fit:** z = a·x + b·y + c is fitted to the trusted returns within `fit_range` (40 m) using
+   `scipy.optimize.least_squares` with a **Cauchy loss** (`f_scale` 5 cm). Residuals much larger than 5 cm, such as walls, cones or
+   cars, barely influence the fit, so no RANSAC sampling is needed. The fit takes about 0.1 s.
+3. **Height above the plane splits the returns:** below `ground_tol` (15 cm) is ground, below `max_height` (3 m) is an obstacle,
+   anything higher is overhead.
+
+### 5. Objects and cone candidates (`lidar_cluster_node.py`)
+1. **Euclidean clustering:** obstacle points closer than `radius` (0.5 m) are linked (`cKDTree.query_pairs`), and every connected
+   component of that graph (`scipy.sparse.csgraph.connected_components`) is one object. Groups smaller than `min_points` (5) count as noise.
+   Because the angular step is ≈ 0.1°, neighbouring points are < 0.45 m apart even at 250 m, so one radius works at every range.
+2. **Per-object statistics** come from `scipy.ndimage` (min / max / mean by label): point count, centre, bounding-box size, top height above
+   ground, range and mean reflectivity.
+3. **Cone candidates:** footprint max(size_x, size_y) ≤ 0.5 m and top height between 0.15 and 0.8 m. For reference,
+   Formula Student cones are 0.325 m (small) and 0.505 m (large) tall.
+
+### 6. Report (`report_node.py`, `lidar_report.py`)
+Collects every topic, writes all outputs, then publishes `/pipeline/status`. `lidar_scan.png` stitches the 4 zones side by side
+into a 160 × 1200 panorama in the sensor's own pixel layout. The horizon runs continuously across the zone borders, which confirms the layout.
 
 ---
 
 ## Results
 
-![profiles](output/profiles.png)
+### Track
+
+![profiles](output/track_profiles.png)
 
 - The raceline uses the full track width (offsets up to 15.6 m) in the classic **outside → apex → outside** pattern.
   Peak curvature drops from 0.047 to 0.030 1/m, so the slowest corner (the hairpin at ≈ 600 m) is taken at 80 km/h instead of 65 km/h.
 - The raceline is also 74 m shorter than the centerline.
 - **Lap time: 95.5 s → 74.4 s.** The raceline keeps exactly the 1.0 m margin to the nearest boundary
-  (`raceline_min_clearance_to_boundary_m` in `results.json`).
+  (`track.raceline_min_clearance_to_boundary_m` in `results.json`).
 
 **Read the 21 s gain with care.** The boundaries are a coarse polygon (≈ 25 m spacing), so the
 exact-interpolation centerline inherits the vertex kinks. These show up as curvature spikes in
-`profiles.png` and force extra slow-downs on the centerline. The raceline optimizer removes them. Part of the gain is
+`track_profiles.png` and force extra slow-downs on the centerline. The raceline optimizer removes them. Part of the gain is
 therefore "smoothing the data" rather than "choosing a better line". The centerline was deliberately not smoothed, to keep it
 faithful to the data.
 
+### LiDAR
+
+![scan](output/lidar_scan.png)
+
+- **The ground is a clean plane:** z = 0.0141·x + 0.0179·y − 1.081 m. The 1.3° tilt reflects how the sensor is mounted on the car.
+  Within 40 m, the median height of returns above the plane is 5 mm.
+- **Point budget:** of the 192,000 pixels, 37.6% have no return (sky) and 5.9% are false alarms. 46.5% are ground, 8.8% are obstacles,
+  and 1.1% are overhead (a tall structure at long range on the right).
+- **50 objects:** the largest are the barriers along y ≈ +13…+16 m (up to 48 m long and 1.5 m high) and a structure at (30, −40) m.
+- **23 cone candidates**, in three groups (the positions are in `results.json` → `lidar.cone_candidates`):
+  - 9 objects with a top height of **0.28–0.32 m**, scattered 6–45 m ahead in a slalom-like pattern. This matches a small FS cone (0.325 m) very well.
+  - 9 objects of **0.45–0.79 m** in a row along y ≈ +10 m, mostly 4–5 m apart, beside the barrier. These are taller than a large cone, so they are probably posts.
+  - 5 objects of **0.40–0.60 m** in a 2 × 3 block at y ≈ −21…−26 m. They fit large cones (0.505 m) or stacked cones.
+
+  From one frame, geometry alone cannot tell these groups apart for certain. That is why they are reported as *candidates* with their heights.
+
 ### Outputs
 
-`pipeline_data.csv`, one row per centerline sample:
+`track_data.csv`, one row per centerline sample:
 
 | Column | Meaning |
 |---|---|
@@ -201,14 +289,27 @@ faithful to the data.
 | `curvature_center`, `curvature_race` | Signed curvature [1/m] (+ = left turn) |
 | `speed_center_mps`, `speed_race_mps` | Speed profile [m/s] |
 
+`lidar_points.csv`, one row per pixel, in the sensor's pixel order:
+
+| Column | Meaning |
+|---|---|
+| `x, y, z, distance` | Position and range [m] (converted from cm) |
+| `reflectivity, pfa, theta, phi, pixel` | As in the source file (`pfa` = probability of false alarm) |
+| `label` | 0 no return, 1 false alarm, 2 ground, 3 obstacle, 4 overhead |
+| `height_above_ground_m` | Signed height above the fitted ground plane |
+| `object_id` | Row in `lidar_objects.csv`, or −1 |
+
+`lidar_objects.csv`, one row per object: `id, n_points, x, y, z` (centre), `size_x, size_y, size_z` (bounding box),
+`top_height` (above ground), `range`, `mean_reflectivity`, `is_cone` (0/1).
+
 ---
 
 ## Fault handling
 
 | Failure | What happens |
 |---|---|
-| A consumer node crashes (any non-zero exit, including a kill) | The launch file restarts it after 1 s, up to 3 times (`config/launch.yaml`). Clean exits are never restarted. The latched topics re-deliver its inputs and it recomputes |
-| The producer crashes | Docker restarts the container (`restart: on-failure:3`). It re-publishes the same latched data |
+| A node crashes (any non-zero exit, including a kill), in either container | The container's launch file restarts it after 1 s, up to 3 times (`config/launch.yaml`). Clean exits are never restarted. The latched topics re-deliver its inputs and it recomputes, or, for a source node, re-publishes |
+| The producer container itself fails | Docker restarts it (`restart: on-failure:3`) |
 | A node disconnects after delivering its data | Nothing is lost: the downstream nodes already hold the data, and latched topics re-deliver it to any node that restarts |
 | Data never arrives (producer down, upstream stuck) | Every node gives up after `deadline_s`. The report publishes `failed: missing [...]`, writes no `results.json`, and the consumer exits with code 1 |
 | Stale results from a previous run | The report deletes its output files at startup |
@@ -230,11 +331,12 @@ There are no parameter defaults in code. A missing key stops the node at startup
 
 | File | Keys |
 |---|---|
-| `producer/producer/config/producer.yaml` | `csv_path`, `deadline_s` |
-| `consumer/consumer/config/pipeline.yaml` | `deadline_s` (all nodes), `n_samples`, `n_dense`, `margin`, `a_lat`, `a_acc`, `a_brk`, `v_top`, `track_name`, `output_dir`, `ack_timeout_s` |
+| `producer/producer/config/producer.yaml` | `deadline_s`; track: `csv_path`, `frame_id`; LiDAR: `csv_path`, `unit_scale`, `scan_width`, `frame_id` |
+| `producer/producer/config/launch.yaml` | `max_restarts`, `restart_delay_s` |
+| `consumer/consumer/config/pipeline.yaml` | `deadline_s` (all nodes); track: `n_samples`, `n_dense`, `margin`, `a_lat`, `a_acc`, `a_brk`, `v_top`; LiDAR: `max_pfa`, `fit_range`, `robust_scale`, `ground_tol`, `max_height`, `radius`, `min_points`, `cone_max_footprint`, `cone_min_height`, `cone_max_height`; report: `track_name`, `output_dir`, `ack_timeout_s`, `scan_zones`, `bev_zoom_range` |
 | `consumer/consumer/config/launch.yaml` | `max_restarts`, `restart_delay_s` |
 
-After editing a config file, rebuild the image (`docker compose up --build`).
+After editing a config file, rebuild the images (`docker compose up --build`).
 
 ---
 
@@ -246,4 +348,9 @@ After editing a config file, rebuild the image (`docker compose up --build`).
   trade path length against speed.
 - **Centerline from nearest points:** pairing each left point with its nearest right point is robust for this track but can
   misbehave on very tight hairpins where the boundaries come close together.
-- **Coarse input data:** see the note under [Results](#results).
+- **Coarse track data:** see the note under [Results](#track).
+- **Single LiDAR frame:** there is no motion, so no tracking, mapping or ego-motion. Detections cannot be confirmed over time.
+- **Flat-ground assumption:** one plane is fitted within 40 m and applied to the whole frame. On sloped or uneven ground the far range would
+  need a piecewise or grid-based ground model.
+- **Cone classification by size only:** the colour and stripes of a cone are not visible to this sensor. Reflectivity is reported per object but not used.
+  Merged neighbours (two cones closer than 0.5 m) form one object.
