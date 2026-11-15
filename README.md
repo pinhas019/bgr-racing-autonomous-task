@@ -21,7 +21,7 @@ the plots and data files.
 Requirements: Docker with Compose v2. Nothing else is needed on the host.
 
 ```bash
-git clone <this-repo-url> BGR-race && cd BGR-race
+git clone git@github.com:pinhas019/bgr-racing-autonomous-task.git && cd bgr-racing-autonomous-task
 docker compose up --build
 ```
 
@@ -67,20 +67,22 @@ The track is wider than a typical racing surface (≈ 12–15 m). The data is us
 
 ```mermaid
 flowchart LR
-  subgraph P["producer container"]
-    CSV[(BrandsHatchLayout.csv)] --> PN[producer_node]
-  end
-  subgraph C["consumer container"]
-    CL[centerline_node] --> RL[raceline_node] --> SP[speed_profile_node] --> RP[report_node]
-    CL --> SP
-    CL --> RP
-    RL --> RP
-  end
-  PN -- "/track/left_boundary<br>/track/right_boundary" --> CL
-  PN --> RP
-  RP --> OUT[(output/)]
-  RP -. "/pipeline/status" .-> PN & CL & RL & SP
+    subgraph PRODUCER ["Producer container"]
+        direction LR
+        CSV[("BrandsHatchLayout.csv")] --> PN["producer_node"]
+    end
+    subgraph CONSUMER ["Consumer container"]
+        direction LR
+        CL["centerline_node"] -->|"centerline, width"| RL["raceline_node"]
+        RL -->|"raceline"| SP["speed_profile_node"]
+        SP -->|"speeds"| RP["report_node"]
+    end
+    PN -->|"left, right boundary"| CL
+    RP --> OUT[("output/")]
 ```
+
+The report also subscribes to every upstream topic (it needs all of them for the plots). When it is done, it
+publishes `/pipeline/status` to every node in both containers (see [Fault handling](#fault-handling)).
 
 Both images are built from `ros:jazzy-ros-base` (Ubuntu 24.04, Python 3.12). The images share nothing but
 standard ROS message types, so the contract between producer and consumer is just the topic list below.
