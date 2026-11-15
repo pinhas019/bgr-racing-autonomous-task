@@ -8,6 +8,7 @@ services:
   producer:
     build: ./producer
     environment: *ros-env
+    restart: on-failure:3   # crash -> restart; it re-publishes its latched data to the consumer
 
   consumer:
     build: ./consumer

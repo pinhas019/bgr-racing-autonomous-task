@@ -1,4 +1,8 @@
 # All consumer pipeline settings. Nodes have no defaults in code: a missing key is a startup error.
+/**:
+  ros__parameters:
+    deadline_s: 180.0     # every node gives up after this long (upstream lost / never arrived)
+
 centerline_node:
   ros__parameters:
     n_samples: 500        # centerline points handed to the rest of the pipeline (~7.8 m spacing)
@@ -19,4 +23,5 @@ report_node:
   ros__parameters:
     track_name: "Brands Hatch"
     output_dir: "/output"
-    timeout_s: 180.0      # give up if the pipeline inputs never arrive
+    ack_timeout_s: 3.0    # max wait for all nodes to acknowledge the final pipeline status (live nodes ack in ms;
+                          # a hard-killed node stays registered in DDS until its lease expires)

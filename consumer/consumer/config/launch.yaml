@@ -1,0 +1,3 @@
+# Supervision of the consumer pipeline nodes (read by launch/pipeline.launch.py).
+max_restarts: 3        # per stage; only crashes (non-zero exit) are restarted
+restart_delay_s: 1.0

@@ -1,3 +1,4 @@
 producer:
   ros__parameters:
     csv_path: "/data/BrandsHatchLayout.csv"   # columns: x, y, side (left/right)
+    deadline_s: 240.0                         # give up if the consumer never reports the pipeline status

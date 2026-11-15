@@ -6,12 +6,13 @@ from nav_msgs.msg import Path
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Float64MultiArray, MultiArrayDimension
+from std_msgs.msg import Float64MultiArray, MultiArrayDimension, String
 
 # Latched: late subscribers still get the last message, so node start order never matters.
 LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
-POLL_S = 0.5  # how often a finished stage checks whether its subscribers are gone
+POLL_S = 0.5  # spin granularity
+STATUS_TOPIC = "/pipeline/status"  # published once by the report: "success" or "failed: ..."
 
 
 def require_params(node, *names):
@@ -57,23 +58,23 @@ class Stage(Node):
     """One pipeline step. Subscribes to `inputs` {name: (type, topic)} and calls `process(**msgs)` once,
     when all have arrived. Publishers made with `self.output(...)` are latched.
 
-    Lifecycle without signals: after processing, the stage keeps serving its latched outputs until every
-    downstream subscriber has connected and gone again, then finishes. The last stage (report) finishes
-    itself, so the whole pipeline unwinds from the end back to the producer.
+    Fault handling:
+    - Crash: the launch file restarts the node; latched inputs are re-delivered, so it simply recomputes.
+    - Upstream lost before delivering: the node waits; past `deadline_s` it gives up and exits.
+    - Finish: the node keeps serving its latched outputs until the report publishes /pipeline/status.
     """
 
     def __init__(self, name, inputs):
         super().__init__(name)
-        self.msgs, self.outputs, self.input_keys = {}, [], set(inputs)
-        self.processed = self.had_subscribers = self.finished = False
+        self.msgs, self.input_keys = {}, set(inputs)
+        self.processed = self.finished = False
         for key, (mtype, topic) in inputs.items():
             self.create_subscription(mtype, topic, lambda m, k=key: self._on_msg(k, m), LATCHED)
-        self.create_timer(POLL_S, self._check_done)
+        self.create_subscription(String, STATUS_TOPIC, self.on_status, LATCHED)
+        self.create_timer(require_params(self, "deadline_s")["deadline_s"], self.on_deadline)
 
     def output(self, mtype, topic):
-        pub = self.create_publisher(mtype, topic, LATCHED)
-        self.outputs.append(pub)
-        return pub
+        return self.create_publisher(mtype, topic, LATCHED)
 
     def _on_msg(self, key, msg):
         self.msgs[key] = msg
@@ -81,12 +82,14 @@ class Stage(Node):
             self.processed = True
             self.process(**self.msgs)
 
-    def _check_done(self):
-        subscribers = sum(p.get_subscription_count() for p in self.outputs)
-        self.had_subscribers |= subscribers > 0
-        if self.outputs and self.had_subscribers and subscribers == 0:  # nobody left to serve
-            self.get_logger().info("all downstream nodes are done; exiting")
-            self.finished = True
+    def on_status(self, msg):
+        self.get_logger().info(f"pipeline status '{msg.data}'; exiting")
+        self.finished = True
+
+    def on_deadline(self):
+        missing = sorted(self.input_keys - self.msgs.keys())
+        self.get_logger().error(f"deadline reached (missing inputs: {missing}); exiting")
+        self.finished = True
 
     def process(self, **msgs):
         raise NotImplementedError

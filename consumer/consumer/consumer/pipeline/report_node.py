@@ -6,14 +6,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 from nav_msgs.msg import Path
-from std_msgs.msg import Float64MultiArray
+from rclpy.duration import Duration
+from std_msgs.msg import Float64MultiArray, String
 
 from consumer.pipeline.centerline_node import left_normals
-from consumer.pipeline.msg_utils import Stage, msg_to_array, path_to_xy, require_params, run
+from consumer.pipeline.msg_utils import STATUS_TOPIC, Stage, msg_to_array, path_to_xy, require_params, run
 from consumer.pipeline.raceline_node import curvature, segment_lengths
 from consumer.pipeline.speed_profile_node import lap_time
 
 KMH = 3.6
+OUTPUT_FILES = ("track.png", "profiles.png", "pipeline_data.csv", "results.json")
 
 
 def summarize(left, right, center, widths, race, v_center, v_race):
@@ -83,6 +85,20 @@ def plot_profiles(path, center, widths, race, v_center, v_race):
     plt.close(fig)
 
 
+def per_point_table(center, widths, race, v_center, v_race):
+    """Every per-point quantity the pipeline computed, one row per centerline sample."""
+    columns = {
+        "s_m": np.concatenate([[0], np.cumsum(segment_lengths(center))[:-1]]),
+        "center_x": center[:, 0], "center_y": center[:, 1],
+        "width_left_m": widths[:, 0], "width_right_m": widths[:, 1],
+        "race_x": race[:, 0], "race_y": race[:, 1],
+        "race_offset_m": np.sum((race - center) * left_normals(center), axis=1),
+        "curvature_center": curvature(center), "curvature_race": curvature(race),
+        "speed_center_mps": v_center, "speed_race_mps": v_race,
+    }
+    return ",".join(columns), np.column_stack(list(columns.values()))
+
+
 class ReportNode(Stage):
     def __init__(self):
         super().__init__("report_node", {
@@ -90,33 +106,48 @@ class ReportNode(Stage):
             "center": (Path, "/track/centerline"), "width": (Float64MultiArray, "/track/width"),
             "race": (Path, "/track/raceline"),
             "v_center": (Float64MultiArray, "/speed/centerline"), "v_race": (Float64MultiArray, "/speed/raceline")})
-        self.cfg = require_params(self, "output_dir", "timeout_s", "track_name")
+        self.cfg = require_params(self, "output_dir", "track_name", "ack_timeout_s")
         self.out = self.cfg["output_dir"]
+        self.status_pub = self.output(String, STATUS_TOPIC)
         os.makedirs(self.out, exist_ok=True)
         self.results_file = os.path.join(self.out, "results.json")
-        if os.path.exists(self.results_file):
-            os.remove(self.results_file)  # a stale file must never look like a successful run
-        self.create_timer(self.cfg["timeout_s"], self.on_timeout)
+        for name in OUTPUT_FILES:  # stale outputs must never look like results of this run
+            if os.path.exists(os.path.join(self.out, name)):
+                os.remove(os.path.join(self.out, name))
 
-    def on_timeout(self):
-        missing = sorted(self.input_keys - set(self.msgs))
-        self.get_logger().error(f"timed out waiting for {missing}; no results written")
+    def finish(self, status):
+        """Tell every node (both containers) the pipeline is over, and wait until they all got it."""
+        self.status_pub.publish(String(data=status))
+        if not self.status_pub.wait_for_all_acked(Duration(seconds=self.cfg["ack_timeout_s"])):
+            self.get_logger().warning("not every node acknowledged the pipeline status")
         self.finished = True
+
+    def on_status(self, msg):
+        pass  # the report is the one publishing it
+
+    def on_deadline(self):
+        missing = sorted(self.input_keys - self.msgs.keys())
+        self.get_logger().error(f"deadline reached waiting for {missing}; no results written")
+        self.finish(f"failed: missing {missing}")
 
     def process(self, left, right, center, width, race, v_center, v_race):
         data = dict(left=path_to_xy(left), right=path_to_xy(right), center=path_to_xy(center),
                     widths=msg_to_array(width), race=path_to_xy(race),
                     v_center=msg_to_array(v_center), v_race=msg_to_array(v_race))
         results = summarize(**data)
-        plot_track(os.path.join(self.out, "track.png"), self.cfg["track_name"], data["left"], data["right"], data["center"],
-                   data["race"], data["v_race"], results)
+        plot_track(os.path.join(self.out, "track.png"), self.cfg["track_name"], data["left"], data["right"],
+                   data["center"], data["race"], data["v_race"], results)
         plot_profiles(os.path.join(self.out, "profiles.png"), data["center"], data["widths"], data["race"],
                       data["v_center"], data["v_race"])
-        with open(self.results_file, "w") as f:
+        header, table = per_point_table(data["center"], data["widths"], data["race"],
+                                        data["v_center"], data["v_race"])
+        np.savetxt(os.path.join(self.out, "pipeline_data.csv"), table, delimiter=",", header=header,
+                   comments="", fmt="%.6f")
+        with open(self.results_file, "w") as f:  # written last: its presence means the run succeeded
             json.dump(results, f, indent=2)
-        self.get_logger().info(f"wrote track.png, profiles.png, results.json to {self.out}\n"
+        self.get_logger().info(f"wrote track.png, profiles.png, pipeline_data.csv, results.json to {self.out}\n"
                                + json.dumps(results, indent=2))
-        self.finished = True
+        self.finish("success")
 
 
 def main():

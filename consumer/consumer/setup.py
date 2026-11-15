@@ -10,7 +10,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/consumer"]),
         ("share/consumer", ["package.xml"]),
         ("share/consumer/launch", ["launch/pipeline.launch.py"]),
-        ("share/consumer/config", ["config/pipeline.yaml"]),
+        ("share/consumer/config", ["config/pipeline.yaml", "config/launch.yaml"]),
     ],
     install_requires=["setuptools"],
     entry_points={"console_scripts": [f"{s} = consumer.pipeline.{s}:main" for s in STAGES]},

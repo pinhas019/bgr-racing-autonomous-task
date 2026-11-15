@@ -1,6 +1,7 @@
 """Producer: reads the track-boundary CSV and publishes each side as a latched nav_msgs/Path.
 
-Exits on its own once the consumer pipeline has received the data and finished (all subscribers gone).
+Keeps serving the latched data until the consumer publishes /pipeline/status (pipeline finished),
+or until deadline_s passes. If it crashes, docker restarts it and it re-publishes the same latched data.
 """
 import numpy as np
 import rclpy
@@ -9,6 +10,7 @@ from nav_msgs.msg import Path
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
 
 LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -38,26 +40,27 @@ def to_path(points, stamp, frame="map"):
 class Producer(Node):
     def __init__(self):
         super().__init__("producer")
-        csv_path = self.declare_parameter("csv_path", descriptor=ParameterDescriptor(dynamic_typing=True)).value
-        if csv_path is None:
-            raise RuntimeError("parameter 'csv_path' missing from config")
+        csv_path, deadline_s = (self.declare_parameter(n, descriptor=ParameterDescriptor(dynamic_typing=True)).value
+                                for n in ("csv_path", "deadline_s"))
+        if csv_path is None or deadline_s is None:
+            raise RuntimeError("parameters 'csv_path' and 'deadline_s' must be set in the config")
         self.sides = load_boundaries(csv_path)
         self.get_logger().info(f"loaded {csv_path}: " + ", ".join(f"{s}={len(p)} points" for s, p in self.sides.items()))
         stamp = self.get_clock().now().to_msg()
-        self.pubs = []
-        for side, pts in self.sides.items():
-            pub = self.create_publisher(Path, f"/track/{side}_boundary", LATCHED)
-            pub.publish(to_path(pts, stamp))  # latched: delivered to subscribers whenever they join
-            self.pubs.append(pub)
-        self.had_subscribers = self.finished = False
-        self.create_timer(POLL_S, self.check_done)
+        self.pubs = [self.create_publisher(Path, f"/track/{side}_boundary", LATCHED) for side in self.sides]
+        for pub, pts in zip(self.pubs, self.sides.values()):
+            pub.publish(to_path(pts, stamp))  # latched: delivered to subscribers whenever they (re)join
+        self.finished = False
+        self.create_subscription(String, "/pipeline/status", self.on_status, LATCHED)
+        self.create_timer(deadline_s, self.on_deadline)
 
-    def check_done(self):
-        subscribers = sum(p.get_subscription_count() for p in self.pubs)
-        self.had_subscribers |= subscribers > 0
-        if self.had_subscribers and subscribers == 0:
-            self.get_logger().info("consumer pipeline finished; exiting")
-            self.finished = True
+    def on_status(self, msg):
+        self.get_logger().info(f"pipeline status '{msg.data}'; exiting")
+        self.finished = True
+
+    def on_deadline(self):
+        self.get_logger().error("deadline reached without a pipeline status; exiting")
+        self.finished = True
 
 
 def main():
