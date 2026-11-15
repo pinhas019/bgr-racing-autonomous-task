@@ -18,7 +18,7 @@ def generate_launch_description():
         Node(package="consumer", executable="centerline_node", output="screen",
              parameters=[{"n_samples": 500}]),
         Node(package="consumer", executable="raceline_node", output="screen",
-             parameters=[{"n_samples": 300, "margin": 1.0}]),
+             parameters=[{"margin": 1.0}]),
         Node(package="consumer", executable="speed_profile_node", output="screen",
              parameters=[VEHICLE]),
         report,
