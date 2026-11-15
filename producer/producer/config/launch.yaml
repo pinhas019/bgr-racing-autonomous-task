@@ -1,0 +1,3 @@
+# Supervision of the producer nodes (read by launch/producer.launch.py).
+max_restarts: 3        # per node; only crashes (non-zero exit) are restarted
+restart_delay_s: 1.0

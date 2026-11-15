@@ -1,4 +1,16 @@
-producer:
+# All producer settings. Nodes have no defaults in code: a missing key is a startup error.
+/**:
   ros__parameters:
-    csv_path: "/data/BrandsHatchLayout.csv"   # columns: x, y, side (left/right)
-    deadline_s: 240.0                         # give up if the consumer never reports the pipeline status
+    deadline_s: 240.0     # give up if the consumer never reports the pipeline status
+
+track_producer:
+  ros__parameters:
+    csv_path: "/data/BrandsHatchLayout.csv"   # columns: x, y, side (left/right), metres
+    frame_id: "map"
+
+lidar_producer:
+  ros__parameters:
+    csv_path: "/data/Frame_702_Refl_1.csv"    # one LiDAR frame, one row per pixel
+    unit_scale: 0.01      # file lengths (x, y, z, Distance) are centimetres -> metres
+    scan_width: 300       # pixels per scan row (the theta sweep restarts every 300 pixels)
+    frame_id: "lidar"

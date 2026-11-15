@@ -219,7 +219,7 @@ To check crash recovery, hard-kill a node in the middle of a run and verify that
 ```bash
 scripts/fault_test.sh consumer lib/consumer/raceline_node "centerline: 500 pts"
 scripts/fault_test.sh consumer lib/consumer/report_node   "centerline: 500 pts"
-scripts/fault_test.sh producer lib/producer/producer_node "centerline: 500 pts"
+scripts/fault_test.sh producer lib/producer/track_producer_node "centerline: 500 pts"
 ```
 
 ---
