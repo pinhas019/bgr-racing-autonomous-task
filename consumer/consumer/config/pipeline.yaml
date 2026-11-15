@@ -3,22 +3,53 @@
   ros__parameters:
     deadline_s: 180.0     # every node gives up after this long (upstream lost / never arrived)
 
-centerline_node:
+# ---- planning: the same three nodes run in two namespaces --------------------------------------------
+# /track: Brands Hatch map, closed lap, GT-like car
+/track/centerline_node:
   ros__parameters:
+    closed: true
+    interpolation: "cubic"  # map polygon -> smooth spline through its points
     n_samples: 500        # centerline points handed to the rest of the pipeline (~7.8 m spacing)
     n_dense: 5000         # boundary resampling density used for nearest-point matching
 
-raceline_node:
+/track/raceline_node:
   ros__parameters:
+    closed: true
+    jacobian: "sparse"    # 500 points: sparse 7 s vs dense 41 s (measured)
     margin: 1.0           # [m] minimum distance kept from each boundary
 
-speed_profile_node:
+/track/speed_profile_node:
   ros__parameters:        # point-mass vehicle, roughly a GT car
+    closed: true
     a_lat: 15.0           # [m/s^2] max lateral acceleration
     a_acc: 8.0            # [m/s^2] max longitudinal acceleration
     a_brk: 12.0           # [m/s^2] max braking deceleration
     v_top: 70.0           # [m/s]   top speed
 
+# /cones: boundaries built from the LiDAR cones, open path ahead of the car, Formula Student car
+/cones/centerline_node:
+  ros__parameters:
+    closed: false
+    interpolation: "linear" # a cone track's edges are straight lines between cones
+    n_samples: 120        # ~0.3 m spacing on a ~35 m path
+    n_dense: 1000
+
+/cones/raceline_node:
+  ros__parameters:
+    closed: false
+    jacobian: "dense"     # 120 points: dense 0.5 s vs sparse 84 s (measured)
+    margin: 1.0           # [m] half the car width (~0.7 m) plus a safety gap
+
+/cones/speed_profile_node:
+  ros__parameters:        # point-mass vehicle, roughly a Formula Student car
+    closed: false
+    a_lat: 15.0           # [m/s^2]
+    a_acc: 8.0            # [m/s^2]
+    a_brk: 12.0           # [m/s^2]
+    v_top: 30.0           # [m/s]
+    v_start: 0.0          # [m/s] speed where the path begins: one frame has no ego speed -> standing start
+
+# ---- perception ---------------------------------------------------------------------------------------
 lidar_ground_node:
   ros__parameters:
     max_pfa: 0.001        # returns with a higher probability of false alarm are set aside
@@ -35,6 +66,18 @@ lidar_cluster_node:
     cone_min_height: 0.15     # [m] ... and top height above ground in this range
     cone_max_height: 0.8      #     (FS cones: 0.325 m small, 0.505 m large)
 
+cone_track_node:
+  ros__parameters:        # LiDAR cones -> left / right boundaries (no colour: geometry only)
+    track_cone_min_height: 0.20   # [m] cones marking the track: small FS cones (0.325 m tall)
+    track_cone_max_height: 0.40
+    gate_min_width: 3.0   # [m] a gate (one cone each side) is about one track width: FS minimum is 3 m
+    gate_max_width: 7.0
+    max_step: 16.0        # [m] max distance to the next gate (allows a few missing / hidden cones)
+    max_turn_deg: 60.0    # the next gate must lie within this angle of the current heading
+    max_gate_skew_deg: 50.0   # a gate must lie across the travel direction, within this angle of perpendicular
+    min_gates: 3          # fewer gates than this: no cone track in the frame -> error
+
+# ---- report ---------------------------------------------------------------------------------------------
 report_node:
   ros__parameters:
     track_name: "Brands Hatch"

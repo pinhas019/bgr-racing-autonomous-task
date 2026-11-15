@@ -218,5 +218,38 @@
         "points": 5
       }
     ]
+  },
+  "cone_path": {
+    "boundary_points": {
+      "left": 4,
+      "right": 4
+    },
+    "centerline_length_m": 25.4,
+    "raceline_length_m": 25.4,
+    "track_width_m": {
+      "min": 3.07,
+      "mean": 4.31,
+      "max": 6.13
+    },
+    "max_curvature_1_per_m": {
+      "centerline": 0.8684,
+      "raceline": 0.0
+    },
+    "time_s": {
+      "centerline": 3.67,
+      "raceline": 2.52,
+      "gain": 1.15
+    },
+    "speed_kmh": {
+      "centerline": {
+        "min": 0.0,
+        "max": 53.6
+      },
+      "raceline": {
+        "min": 0.0,
+        "max": 72.6
+      }
+    },
+    "raceline_min_clearance_to_boundary_m": 1.4
   }
 }

@@ -1,10 +1,12 @@
 """LiDAR part of the report: summary statistics, plots and per-pixel / per-object tables (pure functions)."""
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.collections import LineCollection
 from matplotlib.colors import ListedColormap
 
 from consumer.pipeline.lidar_cluster_node import COLUMNS
 from consumer.pipeline.lidar_ground_node import LABELS, height_above
+from consumer.pipeline.raceline_node import segment_lengths
 
 LABEL_COLORS = {"no_return": "#ffffff", "false_alarm": "#d62728", "ground": "#bdbdbd", "obstacle": "#1f77b4",
                 "overhead": "#9467bd"}
@@ -101,5 +103,50 @@ def plot_scan(path, points, labels, height, width, zones):
             a.axvline(z * width - 0.5, color="k", lw=0.8)
         a.set_ylabel("scan line")
     a2.set_xlabel(f"pixel column ({zones} zones of {width}, left -> right)")
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+
+
+def plot_cone_path(path, points, labels, objects, data, results, kmh=3.6):
+    """Perception feeding planning: LiDAR scene, the cones chosen as left/right boundaries, and the planned
+    centerline / raceline (coloured by speed) from the car forward; speed along the path on the right."""
+    xyz = xyz_of(points)
+    lo = np.vstack([data["left"], data["right"], [[0, 0]]]).min(axis=0) - 6
+    hi = np.vstack([data["left"], data["right"], [[0, 0]]]).max(axis=0) + 6
+    view = np.all((xyz[:, :2] > lo) & (xyz[:, :2] < hi), axis=1)
+    cones = objects[objects[:, COLUMNS.index("is_cone")] == 1]
+    fig, (ax, sp) = plt.subplots(1, 2, figsize=(18, 8), width_ratios=[1.6, 1], layout="constrained")
+    for code, color, size in ((LABELS["ground"], "#e3e3e3", 0.3), (LABELS["obstacle"], "#8c8c8c", 0.8)):
+        sel = view & (labels == code)
+        ax.scatter(xyz[sel, 0], xyz[sel, 1], s=size, c=color, rasterized=True)
+    ax.scatter(cones[:, COLUMNS.index("x")], cones[:, COLUMNS.index("y")], s=90, facecolors="none",
+               edgecolors="orange", label="cone candidates (all)")
+    for side, color in (("left", "#1f4fd8"), ("right", "#f2c200")):
+        ax.plot(*data[side].T, "-o", color=color, ms=9, mec="k", lw=1.2, label=f"{side} boundary cones")
+    ax.plot(*data["center"].T, "--", color="0.3", lw=1, label="centerline")
+    lc = LineCollection(np.stack([data["race"][:-1], data["race"][1:]], axis=1), cmap="plasma", lw=4)
+    lc.set_array(data["v_race"][:-1] * kmh)
+    ax.add_collection(lc)
+    fig.colorbar(lc, ax=ax, shrink=0.7, label="raceline speed [km/h]")
+    ax.plot(0, 0, "k^", ms=12, label="car (sensor)")
+    ax.set_xlim(lo[0], hi[0])
+    ax.set_ylim(lo[1], hi[1])
+    ax.set_aspect("equal")
+    ax.set_xlabel("x [m] (forward)")
+    ax.set_ylabel("y [m] (left)")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="lower left", fontsize=9)
+    t = results["time_s"]
+    ax.set_title(f"LiDAR cones -> boundaries -> planned path: {results['boundary_points']['left']} left + "
+                 f"{results['boundary_points']['right']} right cones, {results['raceline_length_m']:.0f} m")
+    for name, xy, v, color in (("centerline", data["center"], data["v_center"], "0.5"),
+                               ("raceline", data["race"], data["v_race"], "C1")):
+        s = np.concatenate([[0], np.cumsum(segment_lengths(xy, closed=False))[:-1]])
+        sp.plot(s, v * kmh, color=color, lw=2, label=f"{name}: {t[name]:.2f} s")
+    sp.set_xlabel("distance along the path [m]")
+    sp.set_ylabel("speed [km/h]")
+    sp.set_title("speed from a standing start")
+    sp.grid(alpha=0.3)
+    sp.legend(loc="lower right")
     fig.savefig(path, dpi=110)
     plt.close(fig)

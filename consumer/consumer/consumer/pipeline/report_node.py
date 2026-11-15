@@ -14,31 +14,33 @@ from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Float64MultiArray, Int32MultiArray, String
 
 from consumer.pipeline.centerline_node import left_normals
-from consumer.pipeline.lidar_report import lidar_summary, per_pixel_table, plot_bev, plot_scan
+from consumer.pipeline.lidar_report import lidar_summary, per_pixel_table, plot_bev, plot_cone_path, plot_scan
 from consumer.pipeline.msg_utils import (STATUS_TOPIC, Stage, cloud_to_array, msg_columns, msg_to_array, path_to_xy,
                                          require_params, run)
 from consumer.pipeline.raceline_node import curvature, segment_lengths
 from consumer.pipeline.speed_profile_node import lap_time
 
 KMH = 3.6
-OUTPUT_FILES = ("track_speed.png", "track_profiles.png", "track_data.csv",
+OUTPUT_FILES = ("track_speed.png", "track_profiles.png", "track_data.csv", "cone_path.png", "cone_path_data.csv",
                 "lidar_bev.png", "lidar_scan.png", "lidar_points.csv", "lidar_objects.csv", "results.json")
 
 
-def summarize(left, right, center, widths, race, v_center, v_race):
-    offset = np.sum((race - center) * left_normals(center), axis=1)
+def summarize(left, right, center, widths, race, v_center, v_race, closed=True):
+    offset = np.sum((race - center) * left_normals(center, closed), axis=1)
     clearance = np.minimum(widths[:, 0] - offset, widths[:, 1] + offset).min()
     total_w = widths.sum(axis=1)
-    t_c, t_r = lap_time(center, v_center), lap_time(race, v_race)
+    t_c, t_r = lap_time(center, v_center, closed), lap_time(race, v_race, closed)
     return {
         "boundary_points": {"left": len(left), "right": len(right)},
-        "centerline_length_m": round(float(segment_lengths(center).sum()), 1),
-        "raceline_length_m": round(float(segment_lengths(race).sum()), 1),
+        "centerline_length_m": round(float(segment_lengths(center, closed).sum()), 1),
+        "raceline_length_m": round(float(segment_lengths(race, closed).sum()), 1),
         "track_width_m": {"min": round(float(total_w.min()), 2), "mean": round(float(total_w.mean()), 2),
                           "max": round(float(total_w.max()), 2)},
-        "max_curvature_1_per_m": {"centerline": round(float(np.abs(curvature(center)).max()), 4),
-                                  "raceline": round(float(np.abs(curvature(race)).max()), 4)},
-        "lap_time_s": {"centerline": round(t_c, 2), "raceline": round(t_r, 2), "gain": round(t_c - t_r, 2)},
+        "max_curvature_1_per_m": {"centerline": round(float(np.abs(curvature(center, closed)).max()), 4),
+                                  "raceline": round(float(np.abs(curvature(race, closed)).max()), 4)},
+        # closed: one lap; open: start of the path to its end
+        ("lap_time_s" if closed else "time_s"): {"centerline": round(t_c, 2), "raceline": round(t_r, 2),
+                                                 "gain": round(t_c - t_r, 2)},
         "speed_kmh": {"centerline": {"min": round(float(v_center.min() * KMH), 1), "max": round(float(v_center.max() * KMH), 1)},
                       "raceline": {"min": round(float(v_race.min() * KMH), 1), "max": round(float(v_race.max() * KMH), 1)}},
         "raceline_min_clearance_to_boundary_m": round(float(clearance), 2),
@@ -107,15 +109,15 @@ def plot_profiles(path, center, widths, race, v_center, v_race):
     plt.close(fig)
 
 
-def per_point_table(center, widths, race, v_center, v_race):
+def per_point_table(center, widths, race, v_center, v_race, closed=True):
     """Every per-point quantity the pipeline computed, one row per centerline sample."""
     columns = {
-        "s_m": np.concatenate([[0], np.cumsum(segment_lengths(center))[:-1]]),
+        "s_m": np.concatenate([[0], np.cumsum(segment_lengths(center, closed))[:-1]]),
         "center_x": center[:, 0], "center_y": center[:, 1],
         "width_left_m": widths[:, 0], "width_right_m": widths[:, 1],
         "race_x": race[:, 0], "race_y": race[:, 1],
-        "race_offset_m": np.sum((race - center) * left_normals(center), axis=1),
-        "curvature_center": curvature(center), "curvature_race": curvature(race),
+        "race_offset_m": np.sum((race - center) * left_normals(center, closed), axis=1),
+        "curvature_center": curvature(center, closed), "curvature_race": curvature(race, closed),
         "speed_center_mps": v_center, "speed_race_mps": v_race,
     }
     return ",".join(columns), np.column_stack(list(columns.values()))
@@ -124,10 +126,7 @@ def per_point_table(center, widths, race, v_center, v_race):
 class ReportNode(Stage):
     def __init__(self):
         super().__init__("report_node", {
-            "left": (Path, "/track/left_boundary"), "right": (Path, "/track/right_boundary"),
-            "center": (Path, "/track/centerline"), "width": (Float64MultiArray, "/track/width"),
-            "race": (Path, "/track/raceline"),
-            "v_center": (Float64MultiArray, "/speed/centerline"), "v_race": (Float64MultiArray, "/speed/raceline"),
+            **planning_inputs("track"), **planning_inputs("cones"),
             "cloud": (PointCloud2, "/lidar/points"), "labels": (Int32MultiArray, "/lidar/labels"),
             "plane": (Float64MultiArray, "/lidar/ground_plane"), "objects": (Float64MultiArray, "/lidar/clusters"),
             "object_ids": (Int32MultiArray, "/lidar/cluster_ids")})
@@ -158,10 +157,8 @@ class ReportNode(Stage):
         self.get_logger().error(f"deadline reached waiting for {missing}; no results written")
         self.finish(f"failed: missing {missing}")
 
-    def report_track(self, left, right, center, width, race, v_center, v_race):
-        data = dict(left=path_to_xy(left), right=path_to_xy(right), center=path_to_xy(center),
-                    widths=msg_to_array(width), race=path_to_xy(race),
-                    v_center=msg_to_array(v_center), v_race=msg_to_array(v_race))
+    def report_track(self, m):
+        data = planning_arrays(m, "track")
         results = summarize(**data)
         plot_track_speed(self.path("track_speed.png"), self.cfg["track_name"], data["left"], data["right"],
                          {"raceline": (data["race"], data["v_race"]), "centerline": (data["center"], data["v_center"])},
@@ -170,6 +167,15 @@ class ReportNode(Stage):
                       data["v_center"], data["v_race"])
         save_csv(self.path("track_data.csv"), *per_point_table(data["center"], data["widths"], data["race"],
                                                                data["v_center"], data["v_race"]))
+        return results
+
+    def report_cone_path(self, m):
+        data = planning_arrays(m, "cones")
+        results = summarize(**data, closed=False)
+        plot_cone_path(self.path("cone_path.png"), cloud_to_array(m["cloud"]), msg_to_array(m["labels"]).ravel(),
+                       msg_to_array(m["objects"]), data, results)
+        save_csv(self.path("cone_path_data.csv"), *per_point_table(data["center"], data["widths"], data["race"],
+                                                                   data["v_center"], data["v_race"], closed=False))
         return results
 
     def report_lidar(self, cloud, labels, plane, objects, object_ids):
@@ -182,13 +188,30 @@ class ReportNode(Stage):
         save_csv(self.path("lidar_objects.csv"), ",".join(msg_columns(objects)), table)
         return lidar_summary(points, labels, plane, table, stamp)
 
-    def process(self, left, right, center, width, race, v_center, v_race, cloud, labels, plane, objects, object_ids):
-        results = {"track": self.report_track(left, right, center, width, race, v_center, v_race),
-                   "lidar": self.report_lidar(cloud, labels, plane, objects, object_ids)}
+    def process(self, **m):
+        results = {"track": self.report_track(m),
+                   "lidar": self.report_lidar(m["cloud"], m["labels"], m["plane"], m["objects"], m["object_ids"]),
+                   "cone_path": self.report_cone_path(m)}
         with open(self.path("results.json"), "w") as f:  # written last: its presence means the run succeeded
             json.dump(results, f, indent=2)
         self.get_logger().info(f"wrote {', '.join(OUTPUT_FILES)} to {self.out}\n" + json.dumps(results, indent=2))
         self.finish("success")
+
+
+def planning_inputs(ns):
+    """Report inputs from one planning namespace (/track or /cones), keyed '<ns>_<name>'."""
+    return {f"{ns}_left": (Path, f"/{ns}/left_boundary"), f"{ns}_right": (Path, f"/{ns}/right_boundary"),
+            f"{ns}_center": (Path, f"/{ns}/centerline"), f"{ns}_width": (Float64MultiArray, f"/{ns}/width"),
+            f"{ns}_race": (Path, f"/{ns}/raceline"),
+            f"{ns}_v_center": (Float64MultiArray, f"/{ns}/speed/centerline"),
+            f"{ns}_v_race": (Float64MultiArray, f"/{ns}/speed/raceline")}
+
+
+def planning_arrays(m, ns):
+    return dict(left=path_to_xy(m[f"{ns}_left"]), right=path_to_xy(m[f"{ns}_right"]),
+                center=path_to_xy(m[f"{ns}_center"]), widths=msg_to_array(m[f"{ns}_width"]),
+                race=path_to_xy(m[f"{ns}_race"]), v_center=msg_to_array(m[f"{ns}_v_center"]),
+                v_race=msg_to_array(m[f"{ns}_v_race"]))
 
 
 def save_csv(path, header, table):
