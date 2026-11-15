@@ -1,0 +1,17 @@
+# Two containers on one bridge network; DDS discovers peers via multicast on it.
+# Run:  docker compose up --build --exit-code-from consumer   → results in ./output
+x-ros-env: &ros-env
+  ROS_DOMAIN_ID: "42"
+  RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+
+services:
+  producer:
+    build: ./producer
+    environment: *ros-env
+
+  consumer:
+    build: ./consumer
+    environment: *ros-env
+    volumes:
+      - ./output:/output
+    depends_on: [producer]
