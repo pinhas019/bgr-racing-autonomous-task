@@ -38,6 +38,7 @@ lidar_cluster_node:
 report_node:
   ros__parameters:
     track_name: "Brands Hatch"
+    corner_drop_kmh: 15.0 # a speed dip at least this deep counts as a corner (labelled in track_speed.png)
     scan_zones: 4         # LiDAR rows are 4 azimuth zones stacked; stitched side by side for the scan plot
     bev_zoom_range: 35.0  # [m] zoomed bird's-eye view
     output_dir: "/output"

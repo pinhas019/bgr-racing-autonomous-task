@@ -6,8 +6,10 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
 from nav_msgs.msg import Path
 from rclpy.duration import Duration
+from scipy.signal import find_peaks
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Float64MultiArray, Int32MultiArray, String
 
@@ -19,7 +21,7 @@ from consumer.pipeline.raceline_node import curvature, segment_lengths
 from consumer.pipeline.speed_profile_node import lap_time
 
 KMH = 3.6
-OUTPUT_FILES = ("track.png", "track_profiles.png", "track_data.csv",
+OUTPUT_FILES = ("track_speed.png", "track_profiles.png", "track_data.csv",
                 "lidar_bev.png", "lidar_scan.png", "lidar_points.csv", "lidar_objects.csv", "results.json")
 
 
@@ -43,27 +45,42 @@ def summarize(left, right, center, widths, race, v_center, v_race):
     }
 
 
-def plot_track(path, track_name, left, right, center, race, v_race, results):
-    fig, ax = plt.subplots(figsize=(10, 10))
-    for b in (left, right):
-        loop = np.vstack([b, b[:1]])
-        ax.plot(*loop.T, color="0.35", lw=1.2)
-    ax.plot(*np.vstack([center, center[:1]]).T, "--", color="0.6", lw=0.8, label="centerline")
-    loop = np.vstack([race, race[:1]])
-    lc = LineCollection(np.stack([loop[:-1], loop[1:]], axis=1), cmap="plasma", lw=2.5)
-    lc.set_array(v_race * KMH)
-    ax.add_collection(lc)
-    fig.colorbar(lc, ax=ax, shrink=0.6, label="raceline speed [km/h]")
-    ax.annotate("", xy=race[3], xytext=race[0], arrowprops={"arrowstyle": "->", "lw": 2})
-    ax.plot(*race[0], "ko", label="start / finish")
-    lt = results["lap_time_s"]
-    ax.set_title(f"{track_name}: minimum-curvature raceline\n"
-                 f"lap {lt['raceline']:.1f} s vs centerline {lt['centerline']:.1f} s (-{lt['gain']:.1f} s)")
-    ax.set_aspect("equal")
-    ax.set_xlabel("x [m]")
-    ax.set_ylabel("y [m]")
-    ax.legend(loc="upper right")
-    fig.savefig(path, dpi=130, bbox_inches="tight")
+def corner_minima(v_kmh, min_drop_kmh):
+    """Indices of corners: local speed minima at least `min_drop_kmh` below the speeds around them (closed lap)."""
+    n = len(v_kmh)
+    peaks, _ = find_peaks(-np.tile(v_kmh, 3), prominence=min_drop_kmh)  # 3 laps so the start/finish wraps
+    return np.unique(peaks[(peaks >= n) & (peaks < 2 * n)] - n)
+
+
+def plot_track_speed(path, track_name, left, right, lines, results, corner_drop_kmh):
+    """One panel per line ({name: (xy, speed m/s)}), each coloured by its own speed on a shared scale,
+    with the minimum speed written at every corner."""
+    speeds = [v * KMH for _, v in lines.values()]
+    norm = Normalize(min(v.min() for v in speeds), max(v.max() for v in speeds))
+    lap = results["lap_time_s"]
+    fig, axes = plt.subplots(1, len(lines), figsize=(9 * len(lines), 10), layout="constrained")
+    for ax, (name, (xy, _)), v_kmh in zip(axes, lines.items(), speeds):
+        for b in (left, right):
+            ax.plot(*np.vstack([b, b[:1]]).T, color="0.35", lw=1.0)
+        loop = np.vstack([xy, xy[:1]])
+        lc = LineCollection(np.stack([loop[:-1], loop[1:]], axis=1), cmap="plasma", norm=norm, lw=5,
+                            capstyle="round")
+        lc.set_array(v_kmh)
+        ax.add_collection(lc)
+        for i in corner_minima(v_kmh, corner_drop_kmh):
+            ax.annotate(f"{v_kmh[i]:.0f}", xy[i], textcoords="offset points", xytext=(8, 8), fontsize=9,
+                        fontweight="bold", bbox={"boxstyle": "round,pad=0.2", "fc": "white", "alpha": 0.8})
+        ax.annotate("", xy=xy[4], xytext=xy[0], arrowprops={"arrowstyle": "->", "lw": 2.5})
+        ax.plot(*xy[0], "ko", ms=7)
+        ax.set_title(f"{name}: lap {lap[name]:.1f} s, {v_kmh.min():.0f}-{v_kmh.max():.0f} km/h", fontsize=13)
+        ax.set_aspect("equal")
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+    fig.colorbar(axes[-1].collections[-1], ax=axes, shrink=0.6, label="speed [km/h]")
+    fig.suptitle(f"{track_name}: speed along the raceline vs the centerline (raceline -{lap['gain']:.1f} s)\n"
+                 f"numbers = minimum speed in each corner [km/h], dot + arrow = start and driving direction",
+                 fontsize=14)
+    fig.savefig(path, dpi=110)
     plt.close(fig)
 
 
@@ -114,7 +131,8 @@ class ReportNode(Stage):
             "cloud": (PointCloud2, "/lidar/points"), "labels": (Int32MultiArray, "/lidar/labels"),
             "plane": (Float64MultiArray, "/lidar/ground_plane"), "objects": (Float64MultiArray, "/lidar/clusters"),
             "object_ids": (Int32MultiArray, "/lidar/cluster_ids")})
-        self.cfg = require_params(self, "output_dir", "track_name", "ack_timeout_s", "scan_zones", "bev_zoom_range")
+        self.cfg = require_params(self, "output_dir", "track_name", "ack_timeout_s", "scan_zones", "bev_zoom_range",
+                                  "corner_drop_kmh")
         self.out = self.cfg["output_dir"]
         self.status_pub = self.output(String, STATUS_TOPIC)
         os.makedirs(self.out, exist_ok=True)
@@ -145,8 +163,9 @@ class ReportNode(Stage):
                     widths=msg_to_array(width), race=path_to_xy(race),
                     v_center=msg_to_array(v_center), v_race=msg_to_array(v_race))
         results = summarize(**data)
-        plot_track(self.path("track.png"), self.cfg["track_name"], data["left"], data["right"],
-                   data["center"], data["race"], data["v_race"], results)
+        plot_track_speed(self.path("track_speed.png"), self.cfg["track_name"], data["left"], data["right"],
+                         {"raceline": (data["race"], data["v_race"]), "centerline": (data["center"], data["v_center"])},
+                         results, self.cfg["corner_drop_kmh"])
         plot_profiles(self.path("track_profiles.png"), data["center"], data["widths"], data["race"],
                       data["v_center"], data["v_race"])
         save_csv(self.path("track_data.csv"), *per_point_table(data["center"], data["widths"], data["race"],

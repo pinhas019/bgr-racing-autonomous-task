@@ -10,7 +10,7 @@ datasets, and the consumer processes each one in its own branch of pipeline node
 
 A final report node writes plots, tables and a summary for both branches.
 
-![track](output/track.png)
+![track speed](output/track_speed.png)
 
 | Track | Centerline | Raceline |
 |---|---|---|
@@ -43,7 +43,7 @@ Both containers exit on their own when the pipeline is done, which takes about 1
 
 | File | Content |
 |---|---|
-| `track.png` | Boundaries, centerline and raceline, colored by speed |
+| `track_speed.png` | **Speed map**: raceline and centerline side by side, each coloured by its speed (shared scale), with the minimum speed in every corner |
 | `track_profiles.png` | Lateral offset, curvature and speed along the lap, for centerline and raceline |
 | `track_data.csv` | Every per-point value of the track branch (500 rows) |
 | `lidar_bev.png` | Bird's-eye view: ground, objects (one colour each) and cone candidates |
@@ -248,6 +248,8 @@ into a 160 × 1200 panorama in the sensor's own pixel layout. The horizon runs c
 
 ![profiles](output/track_profiles.png)
 
+- **Speed map** (top of this page): on the raceline every corner is taken faster, and the slowest corner, the hairpin, rises from
+  65 to 80 km/h. The centerline shows 19 corner dips against 10 on the raceline. Most of the extra dips come from the kinks in the boundary data (see below).
 - The raceline uses the full track width (offsets up to 15.6 m) in the classic **outside → apex → outside** pattern.
   Peak curvature drops from 0.047 to 0.030 1/m, so the slowest corner (the hairpin at ≈ 600 m) is taken at 80 km/h instead of 65 km/h.
 - The raceline is also 74 m shorter than the centerline.
@@ -333,7 +335,7 @@ There are no parameter defaults in code. A missing key stops the node at startup
 |---|---|
 | `producer/producer/config/producer.yaml` | `deadline_s`; track: `csv_path`, `frame_id`; LiDAR: `csv_path`, `unit_scale`, `scan_width`, `frame_id` |
 | `producer/producer/config/launch.yaml` | `max_restarts`, `restart_delay_s` |
-| `consumer/consumer/config/pipeline.yaml` | `deadline_s` (all nodes); track: `n_samples`, `n_dense`, `margin`, `a_lat`, `a_acc`, `a_brk`, `v_top`; LiDAR: `max_pfa`, `fit_range`, `robust_scale`, `ground_tol`, `max_height`, `radius`, `min_points`, `cone_max_footprint`, `cone_min_height`, `cone_max_height`; report: `track_name`, `output_dir`, `ack_timeout_s`, `scan_zones`, `bev_zoom_range` |
+| `consumer/consumer/config/pipeline.yaml` | `deadline_s` (all nodes); track: `n_samples`, `n_dense`, `margin`, `a_lat`, `a_acc`, `a_brk`, `v_top`; LiDAR: `max_pfa`, `fit_range`, `robust_scale`, `ground_tol`, `max_height`, `radius`, `min_points`, `cone_max_footprint`, `cone_min_height`, `cone_max_height`; report: `track_name`, `corner_drop_kmh`, `output_dir`, `ack_timeout_s`, `scan_zones`, `bev_zoom_range` |
 | `consumer/consumer/config/launch.yaml` | `max_restarts`, `restart_delay_s` |
 
 After editing a config file, rebuild the images (`docker compose up --build`).
