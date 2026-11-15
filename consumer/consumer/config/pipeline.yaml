@@ -38,6 +38,8 @@ lidar_cluster_node:
 report_node:
   ros__parameters:
     track_name: "Brands Hatch"
+    scan_zones: 4         # LiDAR rows are 4 azimuth zones stacked; stitched side by side for the scan plot
+    bev_zoom_range: 35.0  # [m] zoomed bird's-eye view
     output_dir: "/output"
     ack_timeout_s: 3.0    # max wait for all nodes to acknowledge the final pipeline status (live nodes ack in ms;
                           # a hard-killed node stays registered in DDS until its lease expires)

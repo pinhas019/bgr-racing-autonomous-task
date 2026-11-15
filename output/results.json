@@ -1,33 +1,222 @@
 {
-  "boundary_points": {
-    "left": 156,
-    "right": 156
-  },
-  "centerline_length_m": 3919.8,
-  "raceline_length_m": 3845.5,
-  "track_width_m": {
-    "min": 22.59,
-    "mean": 27.54,
-    "max": 35.42
-  },
-  "max_curvature_1_per_m": {
-    "centerline": 0.0466,
-    "raceline": 0.03
-  },
-  "lap_time_s": {
-    "centerline": 95.47,
-    "raceline": 74.36,
-    "gain": 21.11
-  },
-  "speed_kmh": {
-    "centerline": {
-      "min": 64.6,
-      "max": 252.0
+  "track": {
+    "boundary_points": {
+      "left": 156,
+      "right": 156
     },
-    "raceline": {
-      "min": 80.5,
-      "max": 252.0
-    }
+    "centerline_length_m": 3919.8,
+    "raceline_length_m": 3845.5,
+    "track_width_m": {
+      "min": 22.59,
+      "mean": 27.54,
+      "max": 35.42
+    },
+    "max_curvature_1_per_m": {
+      "centerline": 0.0466,
+      "raceline": 0.03
+    },
+    "lap_time_s": {
+      "centerline": 95.47,
+      "raceline": 74.36,
+      "gain": 21.11
+    },
+    "speed_kmh": {
+      "centerline": {
+        "min": 64.6,
+        "max": 252.0
+      },
+      "raceline": {
+        "min": 80.5,
+        "max": 252.0
+      }
+    },
+    "raceline_min_clearance_to_boundary_m": 1.0
   },
-  "raceline_min_clearance_to_boundary_m": 1.0
+  "lidar": {
+    "stamp_unix_s": 1669546076.996195,
+    "pixels": 192000,
+    "label_counts": {
+      "no_return": 72219,
+      "false_alarm": 11404,
+      "ground": 89309,
+      "obstacle": 16885,
+      "overhead": 2183
+    },
+    "return_range_m": {
+      "min": 5.07,
+      "median": 12.89,
+      "max": 244.25
+    },
+    "ground_plane": {
+      "a": 0.0141,
+      "b": 0.01793,
+      "c": -1.0806,
+      "tilt_deg": 1.31,
+      "sensor_height_m": 1.081
+    },
+    "objects": 50,
+    "cone_candidates": [
+      {
+        "x": 5.95,
+        "y": -2.02,
+        "range_m": 6.28,
+        "top_height_m": 0.29,
+        "points": 76
+      },
+      {
+        "x": 14.53,
+        "y": 3.41,
+        "range_m": 14.92,
+        "top_height_m": 0.29,
+        "points": 19
+      },
+      {
+        "x": 15.72,
+        "y": -1.82,
+        "range_m": 15.83,
+        "top_height_m": 0.32,
+        "points": 17
+      },
+      {
+        "x": 21.05,
+        "y": -4.29,
+        "range_m": 21.49,
+        "top_height_m": 0.32,
+        "points": 9
+      },
+      {
+        "x": 23.22,
+        "y": 1.57,
+        "range_m": 23.27,
+        "top_height_m": 0.28,
+        "points": 11
+      },
+      {
+        "x": 22.84,
+        "y": 9.44,
+        "range_m": 24.71,
+        "top_height_m": 0.67,
+        "points": 47
+      },
+      {
+        "x": 27.22,
+        "y": -1.31,
+        "range_m": 27.25,
+        "top_height_m": 0.3,
+        "points": 10
+      },
+      {
+        "x": 17.19,
+        "y": -21.35,
+        "range_m": 27.41,
+        "top_height_m": 0.58,
+        "points": 26
+      },
+      {
+        "x": 20.26,
+        "y": -21.23,
+        "range_m": 29.34,
+        "top_height_m": 0.59,
+        "points": 19
+      },
+      {
+        "x": 30.22,
+        "y": -5.3,
+        "range_m": 30.68,
+        "top_height_m": 0.32,
+        "points": 9
+      },
+      {
+        "x": 17.2,
+        "y": -26.48,
+        "range_m": 31.58,
+        "top_height_m": 0.6,
+        "points": 17
+      },
+      {
+        "x": 20.37,
+        "y": -26.41,
+        "range_m": 33.35,
+        "top_height_m": 0.53,
+        "points": 16
+      },
+      {
+        "x": 23.61,
+        "y": -26.37,
+        "range_m": 35.39,
+        "top_height_m": 0.4,
+        "points": 5
+      },
+      {
+        "x": 36.88,
+        "y": 9.83,
+        "range_m": 38.16,
+        "top_height_m": 0.67,
+        "points": 20
+      },
+      {
+        "x": 40.1,
+        "y": -9.42,
+        "range_m": 41.2,
+        "top_height_m": 0.3,
+        "points": 5
+      },
+      {
+        "x": 41.5,
+        "y": 9.98,
+        "range_m": 42.69,
+        "top_height_m": 0.79,
+        "points": 15
+      },
+      {
+        "x": 45.32,
+        "y": -6.18,
+        "range_m": 45.74,
+        "top_height_m": 0.31,
+        "points": 7
+      },
+      {
+        "x": 46.57,
+        "y": 9.97,
+        "range_m": 47.63,
+        "top_height_m": 0.68,
+        "points": 12
+      },
+      {
+        "x": 51.5,
+        "y": 10.14,
+        "range_m": 52.49,
+        "top_height_m": 0.7,
+        "points": 13
+      },
+      {
+        "x": 57.11,
+        "y": 10.29,
+        "range_m": 58.03,
+        "top_height_m": 0.61,
+        "points": 10
+      },
+      {
+        "x": 60.72,
+        "y": 10.46,
+        "range_m": 61.62,
+        "top_height_m": 0.68,
+        "points": 10
+      },
+      {
+        "x": 64.67,
+        "y": 10.64,
+        "range_m": 65.54,
+        "top_height_m": 0.62,
+        "points": 8
+      },
+      {
+        "x": 68.85,
+        "y": 10.87,
+        "range_m": 69.7,
+        "top_height_m": 0.45,
+        "points": 5
+      }
+    ]
+  }
 }

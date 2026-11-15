@@ -1,4 +1,5 @@
-"""Stage 4: collect every pipeline output, write plots + results.json to output_dir, then exit."""
+"""Final stage: collect every pipeline output (track and LiDAR), write plots, tables and results.json, then tell
+every node the pipeline is over via /pipeline/status."""
 import json
 import os
 
@@ -7,15 +8,19 @@ import numpy as np
 from matplotlib.collections import LineCollection
 from nav_msgs.msg import Path
 from rclpy.duration import Duration
-from std_msgs.msg import Float64MultiArray, String
+from sensor_msgs.msg import PointCloud2
+from std_msgs.msg import Float64MultiArray, Int32MultiArray, String
 
 from consumer.pipeline.centerline_node import left_normals
-from consumer.pipeline.msg_utils import STATUS_TOPIC, Stage, msg_to_array, path_to_xy, require_params, run
+from consumer.pipeline.lidar_report import lidar_summary, per_pixel_table, plot_bev, plot_scan
+from consumer.pipeline.msg_utils import (STATUS_TOPIC, Stage, cloud_to_array, msg_columns, msg_to_array, path_to_xy,
+                                         require_params, run)
 from consumer.pipeline.raceline_node import curvature, segment_lengths
 from consumer.pipeline.speed_profile_node import lap_time
 
 KMH = 3.6
-OUTPUT_FILES = ("track.png", "profiles.png", "pipeline_data.csv", "results.json")
+OUTPUT_FILES = ("track.png", "track_profiles.png", "track_data.csv",
+                "lidar_bev.png", "lidar_scan.png", "lidar_points.csv", "lidar_objects.csv", "results.json")
 
 
 def summarize(left, right, center, widths, race, v_center, v_race):
@@ -105,15 +110,20 @@ class ReportNode(Stage):
             "left": (Path, "/track/left_boundary"), "right": (Path, "/track/right_boundary"),
             "center": (Path, "/track/centerline"), "width": (Float64MultiArray, "/track/width"),
             "race": (Path, "/track/raceline"),
-            "v_center": (Float64MultiArray, "/speed/centerline"), "v_race": (Float64MultiArray, "/speed/raceline")})
-        self.cfg = require_params(self, "output_dir", "track_name", "ack_timeout_s")
+            "v_center": (Float64MultiArray, "/speed/centerline"), "v_race": (Float64MultiArray, "/speed/raceline"),
+            "cloud": (PointCloud2, "/lidar/points"), "labels": (Int32MultiArray, "/lidar/labels"),
+            "plane": (Float64MultiArray, "/lidar/ground_plane"), "objects": (Float64MultiArray, "/lidar/clusters"),
+            "object_ids": (Int32MultiArray, "/lidar/cluster_ids")})
+        self.cfg = require_params(self, "output_dir", "track_name", "ack_timeout_s", "scan_zones", "bev_zoom_range")
         self.out = self.cfg["output_dir"]
         self.status_pub = self.output(String, STATUS_TOPIC)
         os.makedirs(self.out, exist_ok=True)
-        self.results_file = os.path.join(self.out, "results.json")
         for name in OUTPUT_FILES:  # stale outputs must never look like results of this run
-            if os.path.exists(os.path.join(self.out, name)):
-                os.remove(os.path.join(self.out, name))
+            if os.path.exists(self.path(name)):
+                os.remove(self.path(name))
+
+    def path(self, name):
+        return os.path.join(self.out, name)
 
     def finish(self, status):
         """Tell every node (both containers) the pipeline is over, and wait until they all got it."""
@@ -130,24 +140,40 @@ class ReportNode(Stage):
         self.get_logger().error(f"deadline reached waiting for {missing}; no results written")
         self.finish(f"failed: missing {missing}")
 
-    def process(self, left, right, center, width, race, v_center, v_race):
+    def report_track(self, left, right, center, width, race, v_center, v_race):
         data = dict(left=path_to_xy(left), right=path_to_xy(right), center=path_to_xy(center),
                     widths=msg_to_array(width), race=path_to_xy(race),
                     v_center=msg_to_array(v_center), v_race=msg_to_array(v_race))
         results = summarize(**data)
-        plot_track(os.path.join(self.out, "track.png"), self.cfg["track_name"], data["left"], data["right"],
+        plot_track(self.path("track.png"), self.cfg["track_name"], data["left"], data["right"],
                    data["center"], data["race"], data["v_race"], results)
-        plot_profiles(os.path.join(self.out, "profiles.png"), data["center"], data["widths"], data["race"],
+        plot_profiles(self.path("track_profiles.png"), data["center"], data["widths"], data["race"],
                       data["v_center"], data["v_race"])
-        header, table = per_point_table(data["center"], data["widths"], data["race"],
-                                        data["v_center"], data["v_race"])
-        np.savetxt(os.path.join(self.out, "pipeline_data.csv"), table, delimiter=",", header=header,
-                   comments="", fmt="%.6f")
-        with open(self.results_file, "w") as f:  # written last: its presence means the run succeeded
+        save_csv(self.path("track_data.csv"), *per_point_table(data["center"], data["widths"], data["race"],
+                                                               data["v_center"], data["v_race"]))
+        return results
+
+    def report_lidar(self, cloud, labels, plane, objects, object_ids):
+        points, labels = cloud_to_array(cloud), msg_to_array(labels).ravel()
+        plane, table, ids = msg_to_array(plane), msg_to_array(objects), msg_to_array(object_ids).ravel()
+        stamp = cloud.header.stamp.sec + cloud.header.stamp.nanosec * 1e-9
+        plot_bev(self.path("lidar_bev.png"), points, labels, ids, table, self.cfg["bev_zoom_range"])
+        plot_scan(self.path("lidar_scan.png"), points, labels, cloud.height, cloud.width, self.cfg["scan_zones"])
+        save_csv(self.path("lidar_points.csv"), *per_pixel_table(points, labels, plane, ids))
+        save_csv(self.path("lidar_objects.csv"), ",".join(msg_columns(objects)), table)
+        return lidar_summary(points, labels, plane, table, stamp)
+
+    def process(self, left, right, center, width, race, v_center, v_race, cloud, labels, plane, objects, object_ids):
+        results = {"track": self.report_track(left, right, center, width, race, v_center, v_race),
+                   "lidar": self.report_lidar(cloud, labels, plane, objects, object_ids)}
+        with open(self.path("results.json"), "w") as f:  # written last: its presence means the run succeeded
             json.dump(results, f, indent=2)
-        self.get_logger().info(f"wrote track.png, profiles.png, pipeline_data.csv, results.json to {self.out}\n"
-                               + json.dumps(results, indent=2))
+        self.get_logger().info(f"wrote {', '.join(OUTPUT_FILES)} to {self.out}\n" + json.dumps(results, indent=2))
         self.finish("success")
+
+
+def save_csv(path, header, table):
+    np.savetxt(path, table, delimiter=",", header=header, comments="", fmt="%.6g")
 
 
 def main():
