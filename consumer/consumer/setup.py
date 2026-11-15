@@ -1,6 +1,7 @@
 from setuptools import setup
 
-STAGES = ["centerline_node", "raceline_node", "speed_profile_node", "report_node"]
+STAGES = ["centerline_node", "raceline_node", "speed_profile_node", "lidar_ground_node", "lidar_cluster_node",
+          "report_node"]
 
 setup(
     name="consumer",

@@ -19,6 +19,22 @@ speed_profile_node:
     a_brk: 12.0           # [m/s^2] max braking deceleration
     v_top: 70.0           # [m/s]   top speed
 
+lidar_ground_node:
+  ros__parameters:
+    max_pfa: 0.001        # returns with a higher probability of false alarm are set aside
+    fit_range: 40.0       # [m] ground plane is fitted to returns within this horizontal range
+    robust_scale: 0.05    # [m] Cauchy loss scale: residuals much larger than this barely count
+    ground_tol: 0.15      # [m] height above the plane still counted as ground
+    max_height: 3.0       # [m] above this: overhead (signs, trees), not an obstacle
+
+lidar_cluster_node:
+  ros__parameters:
+    radius: 0.5           # [m] points closer than this belong to the same object
+    min_points: 5         # smaller groups are treated as noise
+    cone_max_footprint: 0.5   # [m] cone candidate: max(size_x, size_y) at most this
+    cone_min_height: 0.15     # [m] ... and top height above ground in this range
+    cone_max_height: 0.8      #     (FS cones: 0.325 m small, 0.505 m large)
+
 report_node:
   ros__parameters:
     track_name: "Brands Hatch"

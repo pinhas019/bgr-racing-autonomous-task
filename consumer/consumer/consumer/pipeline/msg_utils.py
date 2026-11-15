@@ -6,7 +6,9 @@ from nav_msgs.msg import Path
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Float64MultiArray, MultiArrayDimension, String
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Float64MultiArray, Int32MultiArray, MultiArrayDimension, String
 
 # Latched: late subscribers still get the last message, so node start order never matters.
 LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -42,16 +44,29 @@ def xy_to_path(xy: np.ndarray, stamp, frame="map") -> Path:
     return msg
 
 
-def array_to_msg(a: np.ndarray) -> Float64MultiArray:
-    a = np.asarray(a, dtype=float)
-    msg = Float64MultiArray()
+def array_to_msg(a, columns=None):
+    """numpy array -> Float64MultiArray (Int32MultiArray for integer arrays). `columns` names the last axis."""
+    a = np.asarray(a)
+    msg = Int32MultiArray() if np.issubdtype(a.dtype, np.integer) else Float64MultiArray()
     msg.layout.dim = [MultiArrayDimension(label=f"d{i}", size=s) for i, s in enumerate(a.shape)]
+    if columns is not None:
+        msg.layout.dim[-1].label = ",".join(columns)
     msg.data = a.ravel().tolist()
     return msg
 
 
-def msg_to_array(msg: Float64MultiArray) -> np.ndarray:
+def msg_to_array(msg):
     return np.array(msg.data).reshape([d.size for d in msg.layout.dim])
+
+
+def msg_columns(msg):
+    """Column names stored by array_to_msg(..., columns=...)."""
+    return msg.layout.dim[-1].label.split(",")
+
+
+def cloud_to_array(msg: PointCloud2) -> np.ndarray:
+    """PointCloud2 -> flat structured numpy array with every field (organized clouds keep row-major order)."""
+    return point_cloud2.read_points(msg, skip_nans=False).ravel()
 
 
 class Stage(Node):

@@ -1,4 +1,6 @@
-"""Consumer pipeline: boundaries -> centerline -> raceline -> speed profile -> report.
+"""Consumer pipeline.
+  track: boundaries -> centerline -> raceline -> speed profile -> report
+  LiDAR: point cloud -> ground/labels -> clusters/cones -> report
 
 Each stage is supervised: if it crashes (non-zero exit) it is started again after a delay, up to a retry limit.
 A clean exit (pipeline finished) is never restarted. Settings: config/launch.yaml.
@@ -12,7 +14,8 @@ from launch.actions import LogInfo, RegisterEventHandler, TimerAction
 from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
 
-STAGES = ["centerline_node", "raceline_node", "speed_profile_node", "report_node"]
+STAGES = ["centerline_node", "raceline_node", "speed_profile_node", "lidar_ground_node", "lidar_cluster_node",
+          "report_node"]
 
 
 def supervised(stage, params_file, retries_left, delay_s):
