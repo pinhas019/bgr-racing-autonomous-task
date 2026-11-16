@@ -14,14 +14,15 @@ from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Float64MultiArray, Int32MultiArray, String
 
 from consumer.pipeline.centerline_node import left_normals
-from consumer.pipeline.lidar_report import lidar_summary, per_pixel_table, plot_bev, plot_cone_path, plot_scan
+from consumer.pipeline.lidar_report import (lidar_summary, per_pixel_table, plot_bev, plot_cone_path, plot_scan,
+                                            plot_scene)
 from consumer.pipeline.msg_utils import (STATUS_TOPIC, Stage, cloud_to_array, msg_columns, msg_to_array, path_to_xy,
                                          require_params, run)
 from consumer.pipeline.raceline_node import curvature, segment_lengths
 from consumer.pipeline.speed_profile_node import lap_time
 
 KMH = 3.6
-OUTPUT_FILES = ("track_speed.png", "track_profiles.png", "track_data.csv", "cone_path.png", "cone_path_data.csv",
+OUTPUT_FILES = ("track_speed.png", "track_profiles.png", "track_data.csv", "cone_path.png", "cone_path_data.csv", "scene.png",
                 "lidar_bev.png", "lidar_scan.png", "lidar_points.csv", "lidar_objects.csv", "results.json")
 
 
@@ -172,8 +173,10 @@ class ReportNode(Stage):
     def report_cone_path(self, m):
         data = planning_arrays(m, "cones")
         results = summarize(**data, closed=False)
-        plot_cone_path(self.path("cone_path.png"), cloud_to_array(m["cloud"]), msg_to_array(m["labels"]).ravel(),
-                       msg_to_array(m["objects"]), data, results)
+        points, labels, objects = cloud_to_array(m["cloud"]), msg_to_array(m["labels"]).ravel(), msg_to_array(m["objects"])
+        plot_cone_path(self.path("cone_path.png"), points, labels, objects, data, results)
+        plot_scene(self.path("scene.png"), points, labels, msg_to_array(m["object_ids"]).ravel(), objects, data,
+                   results)
         save_csv(self.path("cone_path_data.csv"), *per_point_table(data["center"], data["widths"], data["race"],
                                                                    data["v_center"], data["v_race"], closed=False))
         return results

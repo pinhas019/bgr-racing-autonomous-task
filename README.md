@@ -65,6 +65,7 @@ Both containers exit on their own when the pipeline is done, which takes about 1
 | `track_profiles.png` | Lateral offset, curvature and speed along the lap, for centerline and raceline |
 | `track_data.csv` | Every per-point value of the track branch (500 rows) |
 | `cone_path.png` | **Perception → planning**: LiDAR scene, the cones chosen as left / right edges, and the planned path coloured by speed; speed along the path |
+| `scene.png` | **Everything in one picture**: LiDAR obstacles (colour = object), boundary cones, centerline, and the raceline coloured by speed with km/h written along it |
 | `cone_path_data.csv` | Every per-point value of the cone path (120 rows, same columns as `track_data.csv`) |
 | `lidar_bev.png` | Bird's-eye view: ground, objects (one colour each) and cone candidates |
 | `lidar_scan.png` | Range image and per-pixel labels in the sensor's own pixel layout |
@@ -344,6 +345,8 @@ faithful to the data.
   From one frame, geometry alone cannot tell these groups apart for certain. That is why they are reported as *candidates* with their heights.
 
 ### Cone path (perception → planning)
+
+![scene](output/scene.png)
 
 ![cone path](output/cone_path.png)
 

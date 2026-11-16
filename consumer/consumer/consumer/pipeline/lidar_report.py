@@ -107,6 +107,51 @@ def plot_scan(path, points, labels, height, width, zones):
     plt.close(fig)
 
 
+def plot_scene(path, points, labels, pixel_ids, objects, data, results, pad=12.0, label_every_m=4.0, kmh=3.6):
+    """Everything in one picture: LiDAR obstacles (colour = object), boundary cones, centerline, and the raceline
+    coloured by speed with km/h written along it."""
+    xyz = xyz_of(points)
+    corners = np.vstack([data["left"], data["right"], [[0, 0]]])
+    lo, hi = corners.min(axis=0) - pad, corners.max(axis=0) + pad
+    view = np.all((xyz[:, :2] > lo) & (xyz[:, :2] < hi), axis=1)
+    ground, obstacle = view & (labels == LABELS["ground"]), view & (labels == LABELS["obstacle"])
+    cones = objects[objects[:, COLUMNS.index("is_cone")] == 1]
+    fig, ax = plt.subplots(figsize=(16, 9), layout="constrained")
+    ax.scatter(xyz[ground, 0], xyz[ground, 1], s=0.3, c="#e6e6e6", rasterized=True)
+    ax.scatter(xyz[obstacle, 0], xyz[obstacle, 1], s=1.5, c=pixel_ids[obstacle] % 20, cmap="tab20", rasterized=True)
+    ax.scatter([], [], s=20, c="C0", label="obstacles (colour = object)")
+    ax.scatter(cones[:, COLUMNS.index("x")], cones[:, COLUMNS.index("y")], s=110, facecolors="none",
+               edgecolors="orange", linewidths=1.5, label="other cone candidates")
+    for side, color in (("left", "#1f4fd8"), ("right", "#f2c200")):
+        ax.plot(*data[side].T, "o", color=color, ms=11, mec="k", label=f"{side} boundary cones")
+        ax.plot(*data[side].T, "-", color=color, lw=1)
+    ax.plot(*data["center"].T, "--", color="0.3", lw=1, label="centerline")
+    race, v = data["race"], data["v_race"] * kmh
+    lc = LineCollection(np.stack([race[:-1], race[1:]], axis=1), cmap="plasma", lw=5, capstyle="round")
+    lc.set_array(v[:-1])
+    ax.add_collection(lc)
+    fig.colorbar(lc, ax=ax, shrink=0.6, label="raceline speed [km/h]")
+    s = np.concatenate([[0], np.cumsum(segment_lengths(race, closed=False))[:-1]])
+    for i in np.searchsorted(s, np.arange(0, s[-1] + 1e-9, label_every_m)):
+        ax.annotate(f"{v[i]:.0f}", race[i], textcoords="offset points", xytext=(0, 12), ha="center", fontsize=9,
+                    fontweight="bold", bbox={"boxstyle": "round,pad=0.2", "fc": "white", "alpha": 0.85})
+    ax.plot(0, 0, "k^", ms=14, label="car (sensor)")
+    ax.annotate("", xy=race[0], xytext=(0, 0), arrowprops={"arrowstyle": "->", "ls": ":", "color": "0.3"})
+    ax.set_xlim(lo[0], hi[0])
+    ax.set_ylim(lo[1], hi[1])
+    ax.set_aspect("equal")
+    ax.set_xlabel("x [m] (forward)")
+    ax.set_ylabel("y [m] (left)")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="lower left", fontsize=10)
+    t = results["time_s"]
+    ax.set_title(f"LiDAR frame: obstacles, cone boundaries and the planned raceline (numbers = km/h)\n"
+                 f"raceline {t['raceline']:.2f} s vs centerline {t['centerline']:.2f} s over "
+                 f"{results['raceline_length_m']:.0f} m from a standing start", fontsize=13)
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+
+
 def plot_cone_path(path, points, labels, objects, data, results, kmh=3.6):
     """Perception feeding planning: LiDAR scene, the cones chosen as left/right boundaries, and the planned
     centerline / raceline (coloured by speed) from the car forward; speed along the path on the right."""
