@@ -268,7 +268,8 @@ The same three nodes plan on both sources. Per namespace, the config chooses:
    On an open path, the part where one edge runs on past the end of the other is dropped.
 5. The centerline is oriented so the left boundary lies on its left. This fixes the driving direction for the speed profile.
 
-The spline interpolates the data exactly, with no smoothing: accuracy is preferred over a smooth-looking line.
+Both interpolations pass exactly through the data, with no smoothing: accuracy is preferred over a smooth-looking line.
+A natural spline through only 4 cones bulges between them (it narrowed the corridor to 1.8 m), which is why the cone edges are linear (min width 3.1 m).
 
 ### 5. Minimum-curvature raceline (`raceline_node.py`)
 The raceline is the centerline shifted sideways along its normal: **pᵢ = cᵢ + αᵢ nᵢ**. Each offset αᵢ is bounded so
@@ -278,8 +279,10 @@ the car keeps a `margin` (1 m) from both boundaries. The optimization minimizes 
 
 where κᵢ is the **exact** curvature of the shifted points (1 / radius of the circle through pᵢ₋₁, pᵢ, pᵢ₊₁).
 This is written as least-squares residuals rᵢ = κᵢ·√dsᵢ and solved with bounded Gauss–Newton
-(`scipy.optimize.least_squares`, `trf`). Each rᵢ depends only on αᵢ₋₁..αᵢ₊₁. The cyclic-tridiagonal
-`jac_sparsity` passed to scipy reduces the finite-difference Jacobian to a few function evaluations, so the solve takes ≈ 7 s.
+(`scipy.optimize.least_squares`, `trf`). Each rᵢ depends only on αᵢ₋₁..αᵢ₊₁. For the 500-point lap (`jacobian: sparse`),
+the cyclic-tridiagonal `jac_sparsity` passed to scipy reduces the finite-difference Jacobian to a few function evaluations, so
+the solve takes ≈ 7 s. For the 120-point cone path (`jacobian: dense`), the exact dense trust-region solver converges in ≈ 0.5 s.
+On an open path the end points have no curvature term, since they have only one neighbour.
 
 A note on accuracy: the common shortcut of minimizing squared second differences (or linearizing κ around
 the centerline) on a constant-radius corner gets the trend backwards and prefers the *inner* edge. With exact curvature, the
@@ -394,7 +397,8 @@ faithful to the data.
 To check crash recovery, hard-kill a node in the middle of a run and verify that the pipeline still succeeds:
 
 ```bash
-scripts/fault_test.sh consumer lib/consumer/raceline_node "centerline: 500 pts"
+scripts/fault_test.sh consumer lib/consumer/raceline_node "centerline: 500 pts"   # kills both /track and /cones raceline
+scripts/fault_test.sh consumer lib/consumer/cone_track_node "track cones"
 scripts/fault_test.sh consumer lib/consumer/report_node   "centerline: 500 pts"
 scripts/fault_test.sh producer lib/producer/track_producer_node "centerline: 500 pts"
 ```
