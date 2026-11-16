@@ -5,6 +5,7 @@ Run: docker compose run --rm consumer python3 -m pytest -q /ws/tests
 import numpy as np
 
 from consumer.pipeline.centerline_node import compute_centerline, signed_area
+from consumer.pipeline.report_node import edge_clearance
 from consumer.pipeline.raceline_node import curvature, min_curvature_raceline, segment_lengths
 from consumer.pipeline.speed_profile_node import lap_time, speed_profile
 
@@ -65,3 +66,14 @@ def test_raceline_is_faster_than_centerline():
     center, widths = compute_centerline(ell(200 - HALF_W, 60 - HALF_W), ell(200 + HALF_W, 60 + HALF_W), n=120, n_dense=N_DENSE)
     race, _ = min_curvature_raceline(center, widths, MARGIN)
     assert lap_time(race, speed_profile(race, **CAR)) < lap_time(center, speed_profile(center, **CAR))
+
+
+def test_raceline_stays_inside_a_coarse_polygon_track():
+    # Like the Brands Hatch data: few edge points joined by straight lines, with corners that poke inward.
+    # The raceline must keep clear of the edges as drawn, also between its own samples.
+    t = np.linspace(0, 2 * np.pi, 16, endpoint=False)
+    ell = lambda a, b: np.column_stack([a * np.cos(t), b * np.sin(t)])  # noqa: E731
+    left, right = ell(200 - HALF_W, 60 - HALF_W), ell(200 + HALF_W, 60 + HALF_W)
+    center, widths = compute_centerline(left, right, n=120, n_dense=N_DENSE)
+    race, _ = min_curvature_raceline(center, widths, MARGIN)
+    assert edge_clearance(race, left, right) > 0.8 * MARGIN

@@ -5,15 +5,15 @@
       "right": 156
     },
     "centerline_length_m": 3919.8,
-    "raceline_length_m": 3845.5,
+    "raceline_length_m": 3845.1,
     "track_width_m": {
-      "min": 22.59,
-      "mean": 27.54,
-      "max": 35.42
+      "min": 20.6,
+      "mean": 26.93,
+      "max": 34.13
     },
     "max_curvature_1_per_m": {
       "centerline": 0.0466,
-      "raceline": 0.03
+      "raceline": 0.0301
     },
     "lap_time_s": {
       "centerline": 95.47,
@@ -26,11 +26,11 @@
         "max": 252.0
       },
       "raceline": {
-        "min": 80.5,
+        "min": 80.3,
         "max": 252.0
       }
     },
-    "raceline_min_clearance_to_boundary_m": 1.0
+    "raceline_min_clearance_to_boundary_m": 0.87
   },
   "lidar": {
     "stamp_unix_s": 1669546076.996195,
@@ -228,8 +228,8 @@
     "raceline_length_m": 25.4,
     "track_width_m": {
       "min": 3.07,
-      "mean": 4.31,
-      "max": 6.13
+      "mean": 4.26,
+      "max": 6.07
     },
     "max_curvature_1_per_m": {
       "centerline": 0.8684,

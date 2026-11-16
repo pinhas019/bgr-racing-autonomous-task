@@ -32,9 +32,9 @@ A final report node writes plots, tables and a summary for everything.
 
 | Brands Hatch map | Centerline | Raceline |
 |---|---|---|
-| Length | 3919.8 m | 3845.5 m |
+| Length | 3919.8 m | 3845.1 m |
 | Max curvature | 0.0466 1/m (R ≈ 21 m) | 0.0300 1/m (R ≈ 33 m) |
-| Min speed | 64.6 km/h | 80.5 km/h |
+| Min speed | 64.6 km/h | 80.3 km/h |
 | **Lap time** | **95.47 s** | **74.36 s** (−21.1 s) |
 
 ![lidar](output/lidar_bev.png)
@@ -265,7 +265,8 @@ The same three nodes plan on both sources. Per namespace, the config chooses:
    natural for an open path) or with straight segments.
 2. If needed, the right edge is reversed so both edges run the same way (sign of the polygon area for a lap, end-to-end direction for a path).
 3. For every left point, the nearest right point is found with `scipy.spatial.cKDTree`. The **midpoint** of each pair is a centerline candidate.
-4. The midpoints are re-splined and resampled to evenly spaced points. The distances to both edges are the widths.
+4. The midpoints are re-splined and resampled to evenly spaced points. The distances to both edges, measured to the edges exactly as
+   given in the data, are the widths (each sample takes the narrowest width between its neighbours; see the raceline section).
    On an open path, the part where one edge runs on past the end of the other is dropped.
 5. The centerline is oriented so the left boundary lies on its left. This fixes the driving direction for the speed profile.
 
@@ -274,7 +275,11 @@ A natural spline through only 4 cones bulges between them (it narrowed the corri
 
 ### 5. Minimum-curvature raceline (`raceline_node.py`)
 The raceline is the centerline shifted sideways along its normal: **pᵢ = cᵢ + αᵢ nᵢ**. Each offset αᵢ is bounded so
-the car keeps a `margin` (1 m) from both boundaries. The optimization minimizes the curvature energy
+the car keeps a `margin` (1 m) from both boundaries. The bounds come from the centerline widths, which are measured
+**against the edges as the data gives them** (straight segments between the points, not the spline), taking at each
+sample the narrowest width anywhere between its two neighbours (`scipy.ndimage.minimum_filter1d`). Without that, the
+raceline met the margin only against the spline and could pass 0.7 m from a polygon corner between samples.
+The test `test_raceline_stays_inside_a_coarse_polygon_track` checks this. The optimization minimizes the curvature energy
 
   **E = Σ κᵢ² · dsᵢ**
 
@@ -319,8 +324,11 @@ into a 160 × 1200 panorama in the sensor's own pixel layout. The horizon runs c
 - The raceline uses the full track width (offsets up to 15.6 m) in the classic **outside → apex → outside** pattern.
   Peak curvature drops from 0.047 to 0.030 1/m, so the slowest corner (the hairpin at ≈ 600 m) is taken at 80 km/h instead of 65 km/h.
 - The raceline is also 74 m shorter than the centerline.
-- **Lap time: 95.5 s → 74.4 s.** The raceline keeps exactly the 1.0 m margin to the nearest boundary
-  (`track.raceline_min_clearance_to_boundary_m` in `results.json`).
+- **Lap time: 95.5 s → 74.4 s.** The raceline never leaves the track. Measured along the whole line, also between its
+  samples, against the edges exactly as the data gives them (straight segments between the points), it stays at least
+  **0.87 m** from every edge (`track.raceline_min_clearance_to_boundary_m` in `results.json`). The 1 m margin holds exactly at
+  every one of the 500 samples; between two samples (7.7 m apart) the straight piece of line cuts the inside of a curve by up
+  to ≈ 0.13 m. In `track_speed.png` the grey area is the track surface, so this can be checked by eye.
 
 **Read the 21 s gain with care.** The boundaries are a coarse polygon (≈ 25 m spacing), so the
 exact-interpolation centerline inherits the vertex kinks. These show up as curvature spikes in

@@ -8,6 +8,7 @@ Widths are [dist_to_left, dist_to_right].
 import numpy as np
 from nav_msgs.msg import Path
 from scipy.interpolate import CubicSpline
+from scipy.ndimage import minimum_filter1d
 from scipy.spatial import cKDTree
 from std_msgs.msg import Float64MultiArray
 
@@ -56,10 +57,19 @@ def compute_centerline(left, right, n, n_dense, closed=True, interpolation="cubi
     if not closed:  # drop the overhang where one boundary runs past the end of the other
         mid = mid[(j > 0) & (j < len(R) - 1)]
     center = resample(mid, n, closed)
-    d_left, i_left = cKDTree(L).query(center)
-    d_right, _ = cKDTree(R).query(center)
+    # Widths are measured against the edges exactly as the data gives them (straight segments between the points),
+    # not against the spline. Each sample gets the NARROWEST width found anywhere between its two neighbours
+    # (a sub-sampled centerline, SUB points per gap; sample i == fine[i * SUB]), so the raceline's straight pieces
+    # between samples cannot cut into a polygon corner either.
+    SUB = 10
+    fine = resample(mid, n * SUB if closed else (n - 1) * SUB + 1, closed)
+    L_true, R_true = resample(left, n_dense, closed, "linear"), resample(right, n_dense, closed, "linear")
+    mode = "wrap" if closed else "nearest"
+    d_left = minimum_filter1d(cKDTree(L_true).query(fine)[0], 2 * SUB + 1, mode=mode)[::SUB]
+    d_right = minimum_filter1d(cKDTree(R_true).query(fine)[0], 2 * SUB + 1, mode=mode)[::SUB]
+    _, i_left = cKDTree(L_true).query(center)
     # orient so the left boundary is on the +normal side (driving direction follows the side labels)
-    if np.mean(np.sum((L[i_left] - center) * left_normals(center, closed), axis=1)) < 0:
+    if np.mean(np.sum((L_true[i_left] - center) * left_normals(center, closed), axis=1)) < 0:
         center, d_left, d_right = center[::-1], d_left[::-1], d_right[::-1]
     return center, np.column_stack([d_left, d_right])
 

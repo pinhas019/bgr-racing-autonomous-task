@@ -13,7 +13,7 @@ from scipy.signal import find_peaks
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Float64MultiArray, Int32MultiArray, String
 
-from consumer.pipeline.centerline_node import left_normals
+from consumer.pipeline.centerline_node import left_normals, signed_area
 from consumer.pipeline.lidar_report import (lidar_summary, per_pixel_table, plot_bev, plot_cone_path, plot_scan,
                                             plot_scene)
 from consumer.pipeline.msg_utils import (STATUS_TOPIC, Stage, cloud_to_array, msg_columns, msg_to_array, path_to_xy,
@@ -26,9 +26,25 @@ OUTPUT_FILES = ("track_speed.png", "track_profiles.png", "track_data.csv", "cone
                 "lidar_bev.png", "lidar_scan.png", "lidar_points.csv", "lidar_objects.csv", "results.json")
 
 
+def edge_clearance(xy, left, right, closed=True, per_segment=20):
+    """Smallest distance from the whole line (also between its samples) to the edges as given in the data
+    (straight segments between the edge points). The line's samples lie inside the track, so a positive value
+    means it never touches or crosses an edge."""
+    pts = np.vstack([xy, xy[:1]]) if closed else xy
+    f = np.linspace(0, 1, per_segment, endpoint=False)[:, None, None]
+    line = (pts[:-1] + f * (pts[1:] - pts[:-1])).reshape(-1, 2)
+
+    def distance(edge):
+        a, b = (edge, np.roll(edge, -1, 0)) if closed else (edge[:-1], edge[1:])
+        ab, ap = b - a, line[:, None] - a[None]
+        t = np.clip(np.sum(ap * ab, axis=2) / np.sum(ab * ab, axis=1), 0, 1)
+        return np.linalg.norm(ap - t[..., None] * ab, axis=2).min()
+
+    return min(distance(left), distance(right))
+
+
 def summarize(left, right, center, widths, race, v_center, v_race, closed=True):
-    offset = np.sum((race - center) * left_normals(center, closed), axis=1)
-    clearance = np.minimum(widths[:, 0] - offset, widths[:, 1] + offset).min()
+    clearance = edge_clearance(race, left, right, closed)
     total_w = widths.sum(axis=1)
     t_c, t_r = lap_time(center, v_center, closed), lap_time(race, v_race, closed)
     return {
@@ -63,10 +79,13 @@ def plot_track_speed(path, track_name, left, right, lines, results, corner_drop_
     lap = results["lap_time_s"]
     fig, axes = plt.subplots(1, len(lines), figsize=(9 * len(lines), 10), layout="constrained")
     for ax, (name, (xy, _)), v_kmh in zip(axes, lines.items(), speeds):
+        outer, inner = sorted((left, right), key=lambda b: -abs(signed_area(b)))
+        ax.fill(*outer.T, color="0.88", lw=0)  # track surface = between the edges, exactly as in the data
+        ax.fill(*inner.T, color="white", lw=0)
         for b in (left, right):
-            ax.plot(*np.vstack([b, b[:1]]).T, color="0.35", lw=1.0)
+            ax.plot(*np.vstack([b, b[:1]]).T, color="0.2", lw=1.0)
         loop = np.vstack([xy, xy[:1]])
-        lc = LineCollection(np.stack([loop[:-1], loop[1:]], axis=1), cmap="plasma", norm=norm, lw=5,
+        lc = LineCollection(np.stack([loop[:-1], loop[1:]], axis=1), cmap="plasma", norm=norm, lw=2.5,
                             capstyle="round")
         lc.set_array(v_kmh)
         ax.add_collection(lc)
