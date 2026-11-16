@@ -10,6 +10,7 @@ import numpy as np
 from nav_msgs.msg import Path
 from scipy.optimize import least_squares
 from scipy.sparse import diags
+from scipy.spatial import cKDTree
 from std_msgs.msg import Float64MultiArray
 
 from consumer.pipeline.centerline_node import left_normals
@@ -40,12 +41,41 @@ def curvature_energy(xy, closed=True):
     return np.sum(curvature(xy, closed) ** 2 * segment_lengths(xy, closed))
 
 
-def min_curvature_raceline(center, widths, margin, closed=True, jacobian="sparse"):
-    """Return (raceline xy, lateral offsets). widths[:, 0/1] = distance to left/right boundary."""
+def offset_bounds(center, widths, margin, obstacles=None, closed=True):
+    """Lateral offset limits (lo, hi) per sample: `margin` from both edges and, if given, from every obstacle
+    point (columns x, y, object_id) on the track. Each object is passed on the side with more room, the same
+    side along its whole length, so the line does not weave through one object's points. A point limits its
+    nearest sample and the two neighbours, which covers the line between samples."""
+    n = len(center)
+    lo, hi = -(widths[:, 1] - margin), widths[:, 0] - margin
+    if obstacles is None or not len(obstacles):
+        return lo, hi
+    normals = left_normals(center, closed)
+    _, i = cKDTree(center).query(obstacles[:, :2])
+    off = np.sum((obstacles[:, :2] - center[i]) * normals[i], axis=1)  # + = left of the centerline
+    on_track = (off < widths[i, 0]) & (off > -widths[i, 1])
+    i, off, ids = i[on_track], off[on_track], obstacles[on_track, 2]
+    near = i[:, None] + np.arange(-1, 2)
+    near = near % n if closed else np.clip(near, 0, n - 1)
+    for obj in np.unique(ids):
+        k = ids == obj
+        room_left, room_right = np.min(widths[i[k], 0] - off[k]), np.min(widths[i[k], 1] + off[k])
+        if room_left > room_right:  # pass on the left of the object
+            np.maximum.at(lo, near[k], np.repeat(off[k] + margin, 3).reshape(-1, 3))
+        else:
+            np.minimum.at(hi, near[k], np.repeat(off[k] - margin, 3).reshape(-1, 3))
+    return lo, hi
+
+
+def min_curvature_raceline(center, widths, margin, closed=True, jacobian="sparse", obstacles=None):
+    """Return (raceline xy, lateral offsets). widths[:, 0/1] = distance to left/right boundary;
+    obstacles (optional) = rows of (x, y, object_id) in the same frame as the centerline."""
     n = len(center)
     normals = left_normals(center, closed)
-    hi = np.maximum(widths[:, 0] - margin, 1e-6)  # least_squares needs lo < hi strictly
-    lo = np.minimum(-(widths[:, 1] - margin), -1e-6)
+    lo, hi = offset_bounds(center, widths, margin, obstacles, closed)
+    if np.any(lo >= hi):
+        raise RuntimeError(f"no room for the car at {np.count_nonzero(lo >= hi)} samples (obstacles block the track)")
+    x0 = np.clip(0.0, lo, hi)  # start on the centerline, or as close to it as the obstacles allow
 
     def residuals(alpha):
         p = center + alpha[:, None] * normals
@@ -58,21 +88,25 @@ def min_curvature_raceline(center, widths, margin, closed=True, jacobian="sparse
     if jacobian == "sparse":
         # cyclic tridiagonal; for an open path the wrap-around entries are simply never non-zero
         sparsity = diags([1, 1, 1, 1, 1], [-n + 1, -1, 0, 1, n - 1], shape=(n, n))
-        res = least_squares(residuals, np.zeros(n), bounds=(lo, hi), jac_sparsity=sparsity, method="trf")
+        res = least_squares(residuals, x0, bounds=(lo, hi), jac_sparsity=sparsity, method="trf")
     else:
-        res = least_squares(residuals, np.zeros(n), bounds=(lo, hi), method="trf", tr_solver="exact")
+        res = least_squares(residuals, x0, bounds=(lo, hi), method="trf", tr_solver="exact")
     return center + res.x[:, None] * normals, res.x
 
 
 class RacelineNode(Stage):
     def __init__(self):
         super().__init__("raceline_node", {"center": (Path, "centerline"), "width": (Float64MultiArray, "width")})
-        self.cfg = require_params(self, "margin", "closed", "jacobian")
+        self.cfg = require_params(self, "margin", "closed", "jacobian", "avoid_obstacles")
+        if self.cfg["avoid_obstacles"]:
+            self.add_input("obstacles", Float64MultiArray, "obstacles")
         self.pub = self.output(Path, "raceline")
 
-    def process(self, center, width):
+    def process(self, center, width, obstacles=None):
         c, closed = path_to_xy(center), self.cfg["closed"]
-        race, alpha = min_curvature_raceline(c, msg_to_array(width), self.cfg["margin"], closed, self.cfg["jacobian"])
+        obstacles = msg_to_array(obstacles) if obstacles is not None else None
+        race, alpha = min_curvature_raceline(c, msg_to_array(width), self.cfg["margin"], closed, self.cfg["jacobian"],
+                                             obstacles)
         self.get_logger().info(f"raceline: curvature energy {curvature_energy(c, closed):.3f} -> "
                                f"{curvature_energy(race, closed):.3f}, max offset {np.abs(alpha).max():.1f} m")
         self.pub.publish(xy_to_path(race, self.get_clock().now().to_msg()))

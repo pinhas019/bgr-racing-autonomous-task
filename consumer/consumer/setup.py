@@ -1,7 +1,7 @@
 from setuptools import setup
 
 STAGES = ["centerline_node", "raceline_node", "speed_profile_node", "lidar_ground_node", "lidar_cluster_node",
-          "cone_track_node",
+          "cone_track_node", "obstacle_map_node",
           "report_node"]
 
 setup(

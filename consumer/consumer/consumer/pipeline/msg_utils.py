@@ -81,12 +81,17 @@ class Stage(Node):
 
     def __init__(self, name, inputs):
         super().__init__(name)
-        self.msgs, self.input_keys = {}, set(inputs)
+        self.msgs, self.input_keys = {}, set()
         self.processed = self.finished = False
         for key, (mtype, topic) in inputs.items():
-            self.create_subscription(mtype, topic, lambda m, k=key: self._on_msg(k, m), LATCHED)
+            self.add_input(key, mtype, topic)
         self.create_subscription(String, STATUS_TOPIC, self.on_status, LATCHED)
         self.create_timer(require_params(self, "deadline_s")["deadline_s"], self.on_deadline)
+
+    def add_input(self, key, mtype, topic):
+        """An extra input, e.g. one that only some instances of a node need (set by a parameter)."""
+        self.input_keys.add(key)
+        self.create_subscription(mtype, topic, lambda m: self._on_msg(key, m), LATCHED)
 
     def output(self, mtype, topic):
         return self.create_publisher(mtype, topic, LATCHED)

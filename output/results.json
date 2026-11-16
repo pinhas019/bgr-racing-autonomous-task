@@ -5,7 +5,7 @@
       "right": 156
     },
     "centerline_length_m": 3919.8,
-    "raceline_length_m": 3845.1,
+    "raceline_length_m": 3842.0,
     "track_width_m": {
       "min": 20.6,
       "mean": 26.93,
@@ -17,8 +17,8 @@
     },
     "lap_time_s": {
       "centerline": 95.47,
-      "raceline": 74.36,
-      "gain": 21.11
+      "raceline": 74.51,
+      "gain": 20.95
     },
     "speed_kmh": {
       "centerline": {
@@ -30,7 +30,18 @@
         "max": 252.0
       }
     },
-    "raceline_min_clearance_to_boundary_m": 0.87
+    "raceline_min_clearance_to_boundary_m": 0.87,
+    "obstacles": {
+      "assumed_lidar_pose": {
+        "x": 21.29,
+        "y": 10.3,
+        "yaw_deg": 22.7
+      },
+      "points": 16514,
+      "objects": 39,
+      "raceline_min_distance_m": 1.21,
+      "centerline_min_distance_m": 1.0
+    }
   },
   "lidar": {
     "stamp_unix_s": 1669546076.996195,

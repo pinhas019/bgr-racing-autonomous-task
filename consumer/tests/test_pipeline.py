@@ -77,3 +77,16 @@ def test_raceline_stays_inside_a_coarse_polygon_track():
     center, widths = compute_centerline(left, right, n=120, n_dense=N_DENSE)
     race, _ = min_curvature_raceline(center, widths, MARGIN)
     assert edge_clearance(race, left, right) > 0.8 * MARGIN
+
+
+def test_raceline_passes_an_obstacle_on_the_side_with_more_room():
+    # On the circle the free raceline runs along the outer edge. An object 3 m right of the centerline (toward the
+    # outer edge) leaves 2 m on its right and 8 m on its left: the line must pass on its left, >= margin away.
+    t = np.linspace(-0.01, 0.01, 8)
+    obstacle = np.column_stack([(R + 3) * np.cos(t), (R + 3) * np.sin(t), np.zeros_like(t)])  # one object, ~2 m long
+    center, widths = compute_centerline(*circle_track(), n=200, n_dense=N_DENSE)
+    race, alpha = min_curvature_raceline(center, widths, MARGIN, obstacles=obstacle)
+    gap = np.linalg.norm(race[:, None] - obstacle[None, :, :2], axis=2).min()
+    assert gap >= MARGIN - 0.05
+    assert np.linalg.norm(race[np.argmin(np.abs(np.arctan2(race[:, 1], race[:, 0])))]) < R + 3 - MARGIN + 0.05  # inside it
+    assert np.allclose(np.linalg.norm(race, axis=1).max(), R + HALF_W - MARGIN, atol=0.05)  # elsewhere: outer edge

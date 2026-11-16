@@ -6,10 +6,12 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
+from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from nav_msgs.msg import Path
 from rclpy.duration import Duration
 from scipy.signal import find_peaks
+from scipy.spatial import cKDTree
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Float64MultiArray, Int32MultiArray, String
 
@@ -71,36 +73,73 @@ def corner_minima(v_kmh, min_drop_kmh):
     return np.unique(peaks[(peaks >= n) & (peaks < 2 * n)] - n)
 
 
-def plot_track_speed(path, track_name, left, right, lines, results, corner_drop_kmh):
+def min_distance(xy, points, closed=True, per_segment=20):
+    """Smallest distance from the whole line (also between its samples) to any of the points."""
+    pts = np.vstack([xy, xy[:1]]) if closed else xy
+    f = np.linspace(0, 1, per_segment, endpoint=False)[:, None, None]
+    return float(cKDTree(points).query((pts[:-1] + f * (pts[1:] - pts[:-1])).reshape(-1, 2))[0].min())
+
+
+def obstacle_summary(obstacles, pose, center, race):
+    return {"assumed_lidar_pose": {"x": round(float(pose[0]), 2), "y": round(float(pose[1]), 2),
+                                   "yaw_deg": round(float(np.degrees(pose[2])), 1)},
+            "points": int(len(obstacles)), "objects": int(len(np.unique(obstacles[:, 2]))),
+            # the raceline avoids them; the centerline is the plain reference and does not
+            "raceline_min_distance_m": round(min_distance(race, obstacles[:, :2]), 2),
+            "centerline_min_distance_m": round(min_distance(center, obstacles[:, :2]), 2)}
+
+
+def draw_track(ax, left, right, xy, v_kmh, norm, obstacles, pose, lw):
+    outer, inner = sorted((left, right), key=lambda b: -abs(signed_area(b)))
+    ax.fill(*outer.T, color="0.88", lw=0)  # track surface = between the edges, exactly as in the data
+    ax.fill(*inner.T, color="white", lw=0)
+    for b in (left, right):
+        ax.plot(*np.vstack([b, b[:1]]).T, color="0.2", lw=1.0)
+    loop = np.vstack([xy, xy[:1]])
+    lc = LineCollection(np.stack([loop[:-1], loop[1:]], axis=1), cmap="plasma", norm=norm, lw=lw, capstyle="round")
+    lc.set_array(v_kmh)
+    ax.add_collection(lc)
+    ax.scatter(obstacles[:, 0], obstacles[:, 1], s=0.5, c="k", rasterized=True)
+    ax.plot(*pose[:2], "ko", ms=5)
+    ax.annotate("", xy=pose[:2] + 12 * np.array([np.cos(pose[2]), np.sin(pose[2])]), xytext=pose[:2],
+                arrowprops={"arrowstyle": "->", "lw": 2, "color": "k"})
+    ax.set_aspect("equal")
+    return lc
+
+
+def plot_track_speed(path, track_name, left, right, lines, results, corner_drop_kmh, obstacles, pose, zoom_pad=15.0):
     """One panel per line ({name: (xy, speed m/s)}), each coloured by its own speed on a shared scale,
-    with the minimum speed written at every corner."""
+    with the minimum speed written at every corner, the LiDAR obstacles placed on the map (black) and a zoom
+    on them."""
     speeds = [v * KMH for _, v in lines.values()]
     norm = Normalize(min(v.min() for v in speeds), max(v.max() for v in speeds))
     lap = results["lap_time_s"]
+    lo, hi = obstacles[:, :2].min(axis=0) - zoom_pad, obstacles[:, :2].max(axis=0) + zoom_pad
     fig, axes = plt.subplots(1, len(lines), figsize=(9 * len(lines), 10), layout="constrained")
     for ax, (name, (xy, _)), v_kmh in zip(axes, lines.items(), speeds):
-        outer, inner = sorted((left, right), key=lambda b: -abs(signed_area(b)))
-        ax.fill(*outer.T, color="0.88", lw=0)  # track surface = between the edges, exactly as in the data
-        ax.fill(*inner.T, color="white", lw=0)
-        for b in (left, right):
-            ax.plot(*np.vstack([b, b[:1]]).T, color="0.2", lw=1.0)
-        loop = np.vstack([xy, xy[:1]])
-        lc = LineCollection(np.stack([loop[:-1], loop[1:]], axis=1), cmap="plasma", norm=norm, lw=2.5,
-                            capstyle="round")
-        lc.set_array(v_kmh)
-        ax.add_collection(lc)
+        draw_track(ax, left, right, xy, v_kmh, norm, obstacles, pose, lw=2.5)
+        zoom = ax.inset_axes([0.01, 0.01, 0.46, 0.4])
+        draw_track(zoom, left, right, xy, v_kmh, norm, obstacles, pose, lw=4)
+        zoom.set_xlim(lo[0], hi[0])
+        zoom.set_ylim(lo[1], hi[1])
+        zoom.set_xticks([])
+        zoom.set_yticks([])
+        d = results["obstacles"][f"{name}_min_distance_m"]
+        zoom.set_title(f"LiDAR obstacles (black), closest {d:.1f} m", fontsize=9)
+        ax.indicate_inset_zoom(zoom, edgecolor="k")
         for i in corner_minima(v_kmh, corner_drop_kmh):
             ax.annotate(f"{v_kmh[i]:.0f}", xy[i], textcoords="offset points", xytext=(8, 8), fontsize=9,
                         fontweight="bold", bbox={"boxstyle": "round,pad=0.2", "fc": "white", "alpha": 0.8})
         ax.annotate("", xy=xy[4], xytext=xy[0], arrowprops={"arrowstyle": "->", "lw": 2.5})
         ax.plot(*xy[0], "ko", ms=7)
         ax.set_title(f"{name}: lap {lap[name]:.1f} s, {v_kmh.min():.0f}-{v_kmh.max():.0f} km/h", fontsize=13)
-        ax.set_aspect("equal")
         ax.set_xlabel("x [m]")
         ax.set_ylabel("y [m]")
-    fig.colorbar(axes[-1].collections[-1], ax=axes, shrink=0.6, label="speed [km/h]")
+    fig.colorbar(ScalarMappable(norm, "plasma"), ax=axes, shrink=0.6, label="speed [km/h]")
     fig.suptitle(f"{track_name}: speed along the raceline vs the centerline (raceline -{lap['gain']:.1f} s)\n"
-                 f"numbers = minimum speed in each corner [km/h], dot + arrow = start and driving direction",
+                 f"numbers = minimum speed in each corner [km/h], dot + arrow = start and driving direction\n"
+                 f"black = LiDAR obstacles, placed with the LiDAR at an assumed pose (zoom: dot + arrow); "
+                 f"only the raceline avoids them",
                  fontsize=14)
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -149,7 +188,8 @@ class ReportNode(Stage):
             **planning_inputs("track"), **planning_inputs("cones"),
             "cloud": (PointCloud2, "/lidar/points"), "labels": (Int32MultiArray, "/lidar/labels"),
             "plane": (Float64MultiArray, "/lidar/ground_plane"), "objects": (Float64MultiArray, "/lidar/clusters"),
-            "object_ids": (Int32MultiArray, "/lidar/cluster_ids")})
+            "object_ids": (Int32MultiArray, "/lidar/cluster_ids"),
+            "obstacles": (Float64MultiArray, "/track/obstacles"), "lidar_pose": (Float64MultiArray, "/track/lidar_pose")})
         self.cfg = require_params(self, "output_dir", "track_name", "ack_timeout_s", "scan_zones", "bev_zoom_range",
                                   "corner_drop_kmh")
         self.out = self.cfg["output_dir"]
@@ -179,10 +219,12 @@ class ReportNode(Stage):
 
     def report_track(self, m):
         data = planning_arrays(m, "track")
+        obstacles, pose = msg_to_array(m["obstacles"]), msg_to_array(m["lidar_pose"])
         results = summarize(**data)
+        results["obstacles"] = obstacle_summary(obstacles, pose, data["center"], data["race"])
         plot_track_speed(self.path("track_speed.png"), self.cfg["track_name"], data["left"], data["right"],
                          {"raceline": (data["race"], data["v_race"]), "centerline": (data["center"], data["v_center"])},
-                         results, self.cfg["corner_drop_kmh"])
+                         results, self.cfg["corner_drop_kmh"], obstacles, pose)
         plot_profiles(self.path("track_profiles.png"), data["center"], data["widths"], data["race"],
                       data["v_center"], data["v_race"])
         save_csv(self.path("track_data.csv"), *per_point_table(data["center"], data["widths"], data["race"],

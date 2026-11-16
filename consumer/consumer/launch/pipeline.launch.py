@@ -1,5 +1,6 @@
 """Consumer pipeline.
   perception: point cloud -> lidar_ground -> lidar_cluster -> cone_track (cones -> left/right boundaries)
+              obstacle_map: LiDAR obstacles placed on the map (assumed pose) -> /track raceline avoids them
   planning:   boundaries -> centerline -> raceline -> speed_profile, run twice with the SAME nodes:
               namespace /track  on the Brands Hatch map (closed lap)
               namespace /cones  on the boundaries built from LiDAR cones (open path)
@@ -19,7 +20,7 @@ from launch_ros.actions import Node
 
 PLANNING = ["centerline_node", "raceline_node", "speed_profile_node"]
 PLANNING_NAMESPACES = ["track", "cones"]
-OTHER = ["lidar_ground_node", "lidar_cluster_node", "cone_track_node", "report_node"]
+OTHER = ["lidar_ground_node", "lidar_cluster_node", "cone_track_node", "obstacle_map_node", "report_node"]
 
 
 def supervised(stage, namespace, params_file, retries_left, delay_s):

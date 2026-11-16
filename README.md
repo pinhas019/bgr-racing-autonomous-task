@@ -10,6 +10,8 @@ datasets, and the consumer runs the two halves of a driverless race-car software
 - **Perception → planning:** the cones found by the LiDAR are sorted into **left and right track edges**, and the
   *same planning nodes* then plan a path between them, exactly as a Formula Student car does on an unknown cone track.
   The planner also runs on the full **Brands Hatch** map, to show it on a complete 3.9 km lap.
+- **Obstacles on the map:** the LiDAR frame is placed on the Brands Hatch map (at an *assumed* pose: the start line,
+  facing along the track, since one frame has no GPS) and the map raceline **avoids every obstacle** it lands on the track.
 
 ```
 LiDAR frame ─▶ ground + objects ─▶ cones ─▶ left/right edges ─┐
@@ -32,10 +34,11 @@ A final report node writes plots, tables and a summary for everything.
 
 | Brands Hatch map | Centerline | Raceline |
 |---|---|---|
-| Length | 3919.8 m | 3845.1 m |
+| Length | 3919.8 m | 3842.0 m |
 | Max curvature | 0.0466 1/m (R ≈ 21 m) | 0.0300 1/m (R ≈ 33 m) |
 | Min speed | 64.6 km/h | 80.3 km/h |
-| **Lap time** | **95.47 s** | **74.36 s** (−21.1 s) |
+| **Lap time** | **95.47 s** | **74.51 s** (−21.0 s) |
+| LiDAR obstacles on the map (assumed pose) | not avoided, closest 1.0 m | **avoided**, closest 1.2 m |
 
 ![lidar](output/lidar_bev.png)
 
@@ -61,7 +64,7 @@ Both containers exit on their own when the pipeline is done, which takes about 1
 
 | File | Content |
 |---|---|
-| `track_speed.png` | **Speed map**: raceline and centerline side by side, each coloured by its speed (shared scale), with the minimum speed in every corner |
+| `track_speed.png` | **Speed map**: raceline and centerline side by side, each coloured by its speed (shared scale), with the minimum speed in every corner, the LiDAR obstacles placed on the map, and a zoom on them |
 | `track_profiles.png` | Lateral offset, curvature and speed along the lap, for centerline and raceline |
 | `track_data.csv` | Every per-point value of the track branch (500 rows) |
 | `cone_path.png` | **Perception → planning**: LiDAR scene, the cones chosen as left / right edges, and the planned path coloured by speed; speed along the path |
@@ -132,6 +135,8 @@ flowchart LR
         LG["lidar_ground_node"] -->|"labels, plane"| LC["lidar_cluster_node"]
         LC -->|"objects"| CT["cone_track_node"]
         CT -->|"/cones: left, right edges"| CP["/cones planning:<br/>centerline → raceline → speed"]
+        LC -->|"labels, object ids"| OM["obstacle_map_node<br/>(assumed pose on the map)"]
+        OM -->|"/track/obstacles"| TPL
         TPL["/track planning:<br/>centerline → raceline → speed"]
         CP --> RP["report_node"]
         TPL --> RP
@@ -174,6 +179,7 @@ consumer/                      IMAGE 2: processing pipeline
     consumer/pipeline/         one node per stage
       lidar_ground_node.py  lidar_cluster_node.py   perception
       cone_track_node.py                           perception -> planning bridge
+      obstacle_map_node.py                         LiDAR obstacles placed on the map
       centerline_node.py  raceline_node.py  speed_profile_node.py   planning (run as /track and /cones)
       report_node.py  lidar_report.py
       msg_utils.py             QoS, message <-> numpy conversion, Stage base class
@@ -191,6 +197,8 @@ last message, so start order never matters.
 |---|---|---|---|
 | `/track/left_boundary`, `/track/right_boundary` | `nav_msgs/Path` | track_producer | Brands Hatch edges |
 | `/cones/left_boundary`, `/cones/right_boundary` | `nav_msgs/Path` | cone_track | Edges built from LiDAR cones (cone positions in driving order) |
+| `/track/obstacles` | `std_msgs/Float64MultiArray` (points × 3: `x, y, object_id`) | obstacle_map | LiDAR obstacle points in map coordinates; read by `/track/raceline_node` |
+| `/track/lidar_pose` | `std_msgs/Float64MultiArray` (`x, y, yaw`) | obstacle_map | The assumed LiDAR pose on the map |
 | `/<ns>/centerline` | `nav_msgs/Path` | `<ns>`/centerline | Evenly spaced points (500 for `track`, 120 for `cones`) |
 | `/<ns>/width` | `std_msgs/Float64MultiArray` (n×2) | `<ns>`/centerline | Distance to the left / right edge |
 | `/<ns>/raceline` | `nav_msgs/Path` | `<ns>`/raceline | Same number of points as the centerline |
@@ -248,6 +256,16 @@ as cones across the track, so distance alone cannot decide it either.
 On the real frame: 10 track cones → 5 gates → 4 left + 4 right cones, matching the cone layout in `cone_path.png`.
 The walk never reaches the cone 26 m to the side.
 
+## Algorithms: from LiDAR obstacles to the map
+
+### 3b. Obstacle map (`obstacle_map_node.py`)
+One LiDAR frame has no GPS or pose, so **where it was taken on the map is an assumption**, set in the config: the car
+stands on the centerline `anchor_s_m` (0 m, the start line) after the start, facing along the track (LiDAR x = forward,
+y = left). Every obstacle point (label 3) that belongs to an object and lies within `max_range` (60 m) of the sensor is
+rotated and shifted into map coordinates: 16,514 points of 39 objects. Ground, false alarms and overhead structures are
+not obstacles for a car. With this pose the long walls of the frame land along the left edge of the start straight, and
+the cone course lands on the track in front of the car.
+
 ## Algorithms: planning
 
 The same three nodes plan on both sources. Per namespace, the config chooses:
@@ -279,7 +297,16 @@ the car keeps a `margin` (1 m) from both boundaries. The bounds come from the ce
 **against the edges as the data gives them** (straight segments between the points, not the spline), taking at each
 sample the narrowest width anywhere between its two neighbours (`scipy.ndimage.minimum_filter1d`). Without that, the
 raceline met the margin only against the spline and could pass 0.7 m from a polygon corner between samples.
-The test `test_raceline_stays_inside_a_coarse_polygon_track` checks this. The optimization minimizes the curvature energy
+The test `test_raceline_stays_inside_a_coarse_polygon_track` checks this.
+
+**Obstacles** (`avoid_obstacles: true` for `/track`): each obstacle point on the track is projected onto its nearest
+centerline sample, giving its lateral offset oᵢ. Each **object** is passed on the side with more room, and on the same side
+along its whole length, so the line never weaves between the points of one object. Passing on its left sets
+αᵢ ≥ o + margin, on its right αᵢ ≤ o − margin, for the nearest sample and its two neighbours (which covers the line between
+samples). The obstacles only tighten the bounds, so the solver and the objective are unchanged. If the obstacles leave no room
+at some sample, the node fails with a clear error. The test `test_raceline_passes_an_obstacle_on_the_side_with_more_room` checks it.
+
+The optimization minimizes the curvature energy
 
   **E = Σ κᵢ² · dsᵢ**
 
@@ -321,10 +348,14 @@ into a 160 × 1200 panorama in the sensor's own pixel layout. The horizon runs c
 
 - **Speed map** (top of this page): on the raceline every corner is taken faster, and the slowest corner, the hairpin, rises from
   65 to 80 km/h. The centerline shows 20 corner dips against 9 on the raceline. Most of the extra dips come from the kinks in the boundary data (see below).
-- The raceline uses the full track width (offsets up to 15.6 m) in the classic **outside → apex → outside** pattern.
+- The raceline uses the full track width (offsets up to 15.7 m) in the classic **outside → apex → outside** pattern.
   Peak curvature drops from 0.047 to 0.030 1/m, so the slowest corner (the hairpin at ≈ 600 m) is taken at 80 km/h instead of 65 km/h.
-- The raceline is also 74 m shorter than the centerline.
-- **Lap time: 95.5 s → 74.4 s.** The raceline never leaves the track. Measured along the whole line, also between its
+- The raceline is also 78 m shorter than the centerline.
+- **Obstacles** (zoom in `track_speed.png`): without them, the raceline on the start straight ran along the left edge, straight
+  through the wall of the LiDAR frame. Now it passes right of the walls and between the cones of the cone course, at least
+  **1.2 m** from every obstacle point (`track.obstacles` in `results.json`). This costs 0.15 s (74.36 → 74.51 s). The centerline
+  is the plain reference and does not avoid them; it passes 1.0 m from the closest point.
+- **Lap time: 95.5 s → 74.5 s.** The raceline never leaves the track. Measured along the whole line, also between its
   samples, against the edges exactly as the data gives them (straight segments between the points), it stays at least
   **0.87 m** from every edge (`track.raceline_min_clearance_to_boundary_m` in `results.json`). The 1 m margin holds exactly at
   every one of the 500 samples; between two samples (7.7 m apart) the straight piece of line cuts the inside of a curve by up
@@ -424,7 +455,7 @@ There are no parameter defaults in code. A missing key stops the node at startup
 |---|---|
 | `producer/producer/config/producer.yaml` | `deadline_s`; track: `csv_path`, `frame_id`; LiDAR: `csv_path`, `unit_scale`, `scan_width`, `frame_id` |
 | `producer/producer/config/launch.yaml` | `max_restarts`, `restart_delay_s` |
-| `consumer/consumer/config/pipeline.yaml` | `deadline_s` (all nodes); planning, separately for `/track/...` and `/cones/...`: `closed`, `interpolation`, `n_samples`, `n_dense`, `margin`, `jacobian`, `a_lat`, `a_acc`, `a_brk`, `v_top`, `v_start` (open paths); cone track: `track_cone_min_height`, `track_cone_max_height`, `gate_min_width`, `gate_max_width`, `max_step`, `max_turn_deg`, `max_gate_skew_deg`, `min_gates`; LiDAR: `max_pfa`, `fit_range`, `robust_scale`, `ground_tol`, `max_height`, `radius`, `min_points`, `cone_max_footprint`, `cone_min_height`, `cone_max_height`; report: `track_name`, `corner_drop_kmh`, `output_dir`, `ack_timeout_s`, `scan_zones`, `bev_zoom_range` |
+| `consumer/consumer/config/pipeline.yaml` | `deadline_s` (all nodes); planning, separately for `/track/...` and `/cones/...`: `closed`, `interpolation`, `n_samples`, `n_dense`, `margin`, `jacobian`, `a_lat`, `a_acc`, `a_brk`, `v_top`, `v_start` (open paths); cone track: `track_cone_min_height`, `track_cone_max_height`, `gate_min_width`, `gate_max_width`, `max_step`, `max_turn_deg`, `max_gate_skew_deg`, `min_gates`; obstacle map: `anchor_s_m`, `max_range`; raceline: `avoid_obstacles`; LiDAR: `max_pfa`, `fit_range`, `robust_scale`, `ground_tol`, `max_height`, `radius`, `min_points`, `cone_max_footprint`, `cone_min_height`, `cone_max_height`; report: `track_name`, `corner_drop_kmh`, `output_dir`, `ack_timeout_s`, `scan_zones`, `bev_zoom_range` |
 | `consumer/consumer/config/launch.yaml` | `max_restarts`, `restart_delay_s` |
 
 After editing a config file, rebuild the images (`docker compose up --build`).
@@ -440,6 +471,8 @@ After editing a config file, rebuild the images (`docker compose up --build`).
 - **Centerline from nearest points:** pairing each left point with its nearest right point is robust for this track but can
   misbehave on very tight hairpins where the boundaries come close together.
 - **Coarse edges:** see the notes under [Results](#brands-hatch-map). This applies to the cone path too (4 cones a side).
+- **Assumed LiDAR pose on the map:** the frame has no GPS, so it is placed at the start line by assumption (`anchor_s_m`).
+  The obstacles on the map are real LiDAR data, but where they are on Brands Hatch is not.
 - **Single LiDAR frame:** there is no motion, so no tracking, mapping or ego-motion. Detections cannot be confirmed over time.
 - **Flat-ground assumption:** one plane is fitted within 40 m and applied to the whole frame. On sloped or uneven ground the far range would
   need a piecewise or grid-based ground model.

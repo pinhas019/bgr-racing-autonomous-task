@@ -17,6 +17,7 @@
     closed: true
     jacobian: "sparse"    # 500 points: sparse 7 s vs dense 41 s (measured)
     margin: 1.0           # [m] minimum distance kept from each boundary
+    avoid_obstacles: true # pass every LiDAR obstacle placed on the map (obstacle_map_node) at >= margin
 
 /track/speed_profile_node:
   ros__parameters:        # point-mass vehicle, roughly a GT car
@@ -39,6 +40,7 @@
     closed: false
     jacobian: "dense"     # 120 points: dense 0.5 s vs sparse 84 s (measured)
     margin: 1.0           # [m] half the car width (~0.7 m) plus a safety gap
+    avoid_obstacles: false # the cone corridor is already built from the obstacles that matter (the cones)
 
 /cones/speed_profile_node:
   ros__parameters:        # point-mass vehicle, roughly a Formula Student car
@@ -65,6 +67,11 @@ lidar_cluster_node:
     cone_max_footprint: 0.5   # [m] cone candidate: max(size_x, size_y) at most this
     cone_min_height: 0.15     # [m] ... and top height above ground in this range
     cone_max_height: 0.8      #     (FS cones: 0.325 m small, 0.505 m large)
+
+obstacle_map_node:
+  ros__parameters:        # ASSUMPTION: one LiDAR frame has no GPS pose; place it on the Brands Hatch map
+    anchor_s_m: 0.0       # [m] the car stands on the centerline this far after the start, facing along the track
+    max_range: 60.0       # [m] obstacle points farther than this from the sensor are not placed
 
 cone_track_node:
   ros__parameters:        # LiDAR cones -> left / right boundaries (no colour: geometry only)
